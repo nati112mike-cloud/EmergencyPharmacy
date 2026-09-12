@@ -24,3 +24,8 @@ export const DEFAULT_CATEGORY_NAMES = [
   "Formula Milk",
   "Sanitation",
 ] as const;
+
+// Shared by PurchaseOrder (credit purchases) and Bill (rent/salary/other).
+export type PaymentStatus = "UNPAID" | "PAID";
+export type BillType = "RENT" | "SALARY" | "OTHER";
+export type RecurrenceInterval = "WEEKLY" | "MONTHLY" | "YEARLY";

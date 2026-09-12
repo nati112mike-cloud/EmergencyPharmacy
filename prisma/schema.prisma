@@ -100,9 +100,41 @@ model PurchaseOrder {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
+  // Payment tracking for credit purchases — separate from receiving status,
+  // since goods can arrive well before the supplier's invoice is due.
+  dueDate          DateTime?
+  paymentStatus    String    @default("UNPAID") // PaymentStatus: UNPAID | PAID
+  paidDate         DateTime?
+  paidAmount       Float?
+  invoiceFileName  String? // original uploaded filename, for display
+  invoiceFilePath  String? // storage key, see lib/fileStorage.ts
+
   items PurchaseOrderItem[]
 
   @@index([status])
+  @@index([dueDate])
+  @@index([paymentStatus])
+}
+
+// Non-inventory payables: rent, salaries, and anything else that recurs on
+// a schedule rather than arriving as a supplier delivery.
+model Bill {
+  id                 String    @id @default(cuid())
+  type               String // BillType: RENT | SALARY | OTHER
+  title              String
+  amount             Float
+  dueDate            DateTime
+  paymentStatus      String    @default("UNPAID") // PaymentStatus: UNPAID | PAID
+  paidDate           DateTime?
+  paidAmount         Float?
+  notes              String?
+  isRecurring        Boolean   @default(false)
+  recurrenceInterval String? // RecurrenceInterval: WEEKLY | MONTHLY | YEARLY
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([dueDate])
+  @@index([paymentStatus])
 }
 
 model PurchaseOrderItem {

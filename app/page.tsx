@@ -20,6 +20,18 @@ type DashboardData = {
     daysUntilExpiry: number;
     status: string;
   }[];
+  overduePaymentsCount: number;
+  overduePaymentsAmount: number;
+  dueSoonPaymentsCount: number;
+  dueSoonPaymentsAmount: number;
+  upcomingPayments: {
+    id: string;
+    kind: "PURCHASE_ORDER" | "BILL";
+    title: string;
+    amount: number;
+    daysUntilDue: number;
+    urgency: "overdue" | "due_soon" | "upcoming";
+  }[];
 };
 
 function money(n: number) {
@@ -50,7 +62,7 @@ export default function DashboardPage() {
         <p className="text-slate-500">Today's snapshot and this week's growth signals.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <div className="card">
           <p className="text-sm text-slate-500">Today's Sales</p>
           <p className="mt-1 text-2xl font-bold">{data.todaySalesCount}</p>
@@ -71,9 +83,14 @@ export default function DashboardPage() {
           <p className="mt-1 text-2xl font-bold text-red-600">{data.expiringCount}</p>
           <p className="text-sm text-slate-500">Within 90 days</p>
         </Link>
+        <Link href="/payments" className="card block transition hover:shadow-md">
+          <p className="text-sm text-slate-500">Payments Overdue</p>
+          <p className="mt-1 text-2xl font-bold text-red-600">{data.overduePaymentsCount}</p>
+          <p className="text-sm text-slate-500">{money(data.overduePaymentsAmount)}</p>
+        </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <div className="card md:col-span-1">
           <h2 className="mb-3 font-semibold text-slate-900">Top Sellers This Week</h2>
           {data.topProducts.length === 0 ? (
@@ -131,6 +148,35 @@ export default function DashboardPage() {
           )}
           <Link href="/inventory" className="mt-3 inline-block text-sm font-medium text-brand-600">
             View inventory →
+          </Link>
+        </div>
+
+        <div className="card md:col-span-1">
+          <h2 className="mb-3 font-semibold text-slate-900">Payments Due</h2>
+          {data.upcomingPayments.length === 0 ? (
+            <p className="text-sm text-slate-500">Nothing due — you're all caught up.</p>
+          ) : (
+            <ul className="space-y-2">
+              {data.upcomingPayments.map((p) => (
+                <li key={`${p.kind}-${p.id}`} className="flex items-center justify-between text-sm">
+                  <span className="truncate pr-2">{p.title}</span>
+                  <span
+                    className={`badge ${
+                      p.urgency === "overdue"
+                        ? "badge-danger"
+                        : p.urgency === "due_soon"
+                        ? "badge-warning"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {p.urgency === "overdue" ? `${Math.abs(p.daysUntilDue)}d late` : `${money(p.amount)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link href="/payments" className="mt-3 inline-block text-sm font-medium text-brand-600">
+            Manage payments →
           </Link>
         </div>
       </div>

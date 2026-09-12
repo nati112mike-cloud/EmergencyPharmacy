@@ -8,6 +8,7 @@ const links = [
   { href: "/pos", label: "POS" },
   { href: "/inventory", label: "Inventory" },
   { href: "/suppliers", label: "Suppliers" },
+  { href: "/payments", label: "Payments" },
   { href: "/reports", label: "Reports" },
 ];
 

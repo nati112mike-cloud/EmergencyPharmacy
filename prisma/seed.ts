@@ -17,6 +17,7 @@ async function main() {
   await prisma.stockMovement.deleteMany();
   await prisma.purchaseOrderItem.deleteMany();
   await prisma.purchaseOrder.deleteMany();
+  await prisma.bill.deleteMany();
   await prisma.batch.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
@@ -190,6 +191,51 @@ async function main() {
       }
     }
   }
+
+  // Bills: rent and salary, one already overdue and one recurring monthly so
+  // the Payments page and dashboard widget have real, mixed-urgency data.
+  await prisma.bill.create({
+    data: {
+      type: "RENT",
+      title: "Store Rent",
+      amount: 450,
+      dueDate: daysFromNow(-3),
+      isRecurring: true,
+      recurrenceInterval: "MONTHLY",
+    },
+  });
+  await prisma.bill.create({
+    data: {
+      type: "SALARY",
+      title: "Staff Salary - Cashier",
+      amount: 320,
+      dueDate: daysFromNow(4),
+      isRecurring: true,
+      recurrenceInterval: "MONTHLY",
+    },
+  });
+  await prisma.bill.create({
+    data: {
+      type: "OTHER",
+      title: "Pharmacy License Renewal",
+      amount: 120,
+      dueDate: daysFromNow(25),
+    },
+  });
+
+  // A credit purchase (ordered on credit, invoice due later, not yet
+  // received) so the Payments page also shows a supplier-side amount
+  // alongside rent/salary.
+  const insulin = products.find((p) => p.sku === "MED-1050")!;
+  await prisma.purchaseOrder.create({
+    data: {
+      supplierId: medSupply.id,
+      status: "ORDERED",
+      dueDate: daysFromNow(10),
+      notes: "Seed credit purchase",
+      items: { create: [{ productId: insulin.id, quantity: 10, unitCost: 60 }] },
+    },
+  });
 
   console.log(
     `Seeded ${products.length} products across ${DEFAULT_CATEGORY_NAMES.length} categories and 3 suppliers with sales history.`

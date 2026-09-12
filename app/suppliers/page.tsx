@@ -27,6 +27,10 @@ type PurchaseOrder = {
   id: string;
   status: string;
   orderDate: string;
+  dueDate: string | null;
+  paymentStatus: string;
+  invoiceFileName: string | null;
+  invoiceFilePath: string | null;
   supplier: { name: string };
   items: { id: string; quantity: number; unitCost: number; product: { name: string } }[];
 };
@@ -80,6 +84,15 @@ export default function SuppliersPage() {
 
   async function receivePo(id: string) {
     await fetch(`/api/purchase-orders/${id}/receive`, { method: "POST" });
+    load();
+  }
+
+  async function payPo(id: string) {
+    await fetch(`/api/purchase-orders/${id}/pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
     load();
   }
 
@@ -187,6 +200,31 @@ export default function SuppliersPage() {
                         </li>
                       ))}
                     </ul>
+                    {o.dueDate && (
+                      <div className="mt-2 flex items-center gap-2 border-t border-slate-100 pt-2 text-sm">
+                        <span className={`badge ${o.paymentStatus === "PAID" ? "badge-ok" : "badge-warning"}`}>
+                          {o.paymentStatus === "PAID" ? "Paid" : "Unpaid"}
+                        </span>
+                        <span className="text-slate-500">
+                          Due {new Date(o.dueDate).toLocaleDateString()}
+                        </span>
+                        {o.invoiceFilePath && (
+                          <a
+                            href={`/api/invoices/file/${o.invoiceFilePath}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-medium text-brand-600"
+                          >
+                            View invoice
+                          </a>
+                        )}
+                        {o.paymentStatus !== "PAID" && (
+                          <button className="font-medium text-brand-600" onClick={() => payPo(o.id)}>
+                            Mark Paid
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

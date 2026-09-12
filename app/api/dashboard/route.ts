@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getLowStockProducts, getExpiringBatches, startOfWeek } from "@/lib/business";
+import { getUpcomingPayments } from "@/lib/payments";
 
 export async function GET() {
   const now = new Date();
@@ -8,7 +9,7 @@ export async function GET() {
   todayStart.setHours(0, 0, 0, 0);
   const weekStart = startOfWeek(now);
 
-  const [todaySales, weekSaleItems, lowStock, expiring] = await Promise.all([
+  const [todaySales, weekSaleItems, lowStock, expiring, payments] = await Promise.all([
     prisma.sale.findMany({ where: { saleDate: { gte: todayStart } } }),
     prisma.saleItem.findMany({
       where: { sale: { saleDate: { gte: weekStart } } },
@@ -16,7 +17,11 @@ export async function GET() {
     }),
     getLowStockProducts(),
     getExpiringBatches(),
+    getUpcomingPayments(),
   ]);
+
+  const overduePayments = payments.filter((p) => p.urgency === "overdue");
+  const dueSoonPayments = payments.filter((p) => p.urgency === "due_soon");
 
   const todayRevenue = todaySales.reduce((s, sale) => s + sale.totalAmount, 0);
   const weekRevenue = weekSaleItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
@@ -50,5 +55,10 @@ export async function GET() {
     topProducts,
     lowStock: lowStock.slice(0, 5),
     expiring: expiring.slice(0, 5),
+    overduePaymentsCount: overduePayments.length,
+    overduePaymentsAmount: overduePayments.reduce((s, p) => s + p.amount, 0),
+    dueSoonPaymentsCount: dueSoonPayments.length,
+    dueSoonPaymentsAmount: dueSoonPayments.reduce((s, p) => s + p.amount, 0),
+    upcomingPayments: payments.slice(0, 5),
   });
 }
