@@ -30,11 +30,21 @@ model Supplier {
   purchaseOrders PurchaseOrder[]
 }
 
+// Open-ended: seeded with pharmacy defaults (Drug, Cosmetics, Skincare,
+// Off-Drugs, Formula Milk, Sanitation) but staff can add more from the UI.
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
 model Product {
   id                String   @id @default(cuid())
   sku               String   @unique
   name              String
-  category          String?
+  categoryId        String?
+  category          Category? @relation(fields: [categoryId], references: [id])
   unit              String   @default("unit") // e.g. box, bottle, strip
   description       String?
   price             Float    // current sale price
@@ -51,7 +61,7 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   stockMovements     StockMovement[]
 
-  @@index([category])
+  @@index([categoryId])
 }
 
 model Batch {
@@ -59,18 +69,23 @@ model Batch {
   productId    String
   product      Product   @relation(fields: [productId], references: [id])
   batchNumber  String
-  quantity     Int // remaining quantity in this batch
+  quantity     Int // remaining quantity in this batch, at this location
   costPrice    Float // unit cost for margin calculations
   expiryDate   DateTime
   receivedDate DateTime  @default(now())
   supplierId   String?
   supplier     Supplier? @relation(fields: [supplierId], references: [id])
+  // Back stock ("STORE") vs shelf stock ("DISPLAY") — see lib/types.ts
+  // BatchLocation. POS sells from DISPLAY only; a transfer moves quantity
+  // from a STORE batch into a DISPLAY batch of the same lot.
+  location     String    @default("STORE")
 
   saleItems      SaleItem[]
   stockMovements StockMovement[]
 
   @@index([productId])
   @@index([expiryDate])
+  @@index([location])
 }
 
 model PurchaseOrder {

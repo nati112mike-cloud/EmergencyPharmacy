@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { PaymentMethod } from "@/lib/types";
+import { PaymentMethod, BatchLocation, StockMovementType } from "@/lib/types";
 
 /** A batch is flagged "expiring soon" inside this many days. */
 export const EXPIRY_WARNING_DAYS = 90;
@@ -18,10 +18,13 @@ export function isExpiringSoon(date: Date): boolean {
   return d >= 0 && d <= EXPIRY_WARNING_DAYS;
 }
 
-/** Total remaining quantity across a product's non-expired batches. */
-export async function getProductStock(productId: string): Promise<number> {
+/** Total remaining quantity across a product's non-expired batches, optionally scoped to one location. */
+export async function getProductStock(
+  productId: string,
+  location?: BatchLocation
+): Promise<number> {
   const batches = await prisma.batch.findMany({
-    where: { productId, quantity: { gt: 0 } },
+    where: { productId, quantity: { gt: 0 }, ...(location && { location }) },
   });
   return batches
     .filter((b) => !isExpired(b.expiryDate))
@@ -33,6 +36,8 @@ export type LowStockItem = {
   sku: string;
   name: string;
   stock: number;
+  storeStock: number;
+  displayStock: number;
   reorderPoint: number;
   reorderQty: number;
   defaultSupplierId: string | null;
@@ -40,7 +45,7 @@ export type LowStockItem = {
   lastCostPrice: number;
 };
 
-/** Products whose sellable (non-expired) stock is at or below their reorder point. */
+/** Products whose sellable (non-expired) stock, across store + display, is at or below their reorder point. */
 export async function getLowStockProducts(): Promise<LowStockItem[]> {
   const products = await prisma.product.findMany({
     include: {
@@ -51,15 +56,18 @@ export async function getLowStockProducts(): Promise<LowStockItem[]> {
 
   const result: LowStockItem[] = [];
   for (const p of products) {
-    const stock = p.batches
-      .filter((b) => b.quantity > 0 && !isExpired(b.expiryDate))
-      .reduce((sum, b) => sum + b.quantity, 0);
+    const live = p.batches.filter((b) => b.quantity > 0 && !isExpired(b.expiryDate));
+    const storeStock = live.filter((b) => b.location === "STORE").reduce((s, b) => s + b.quantity, 0);
+    const displayStock = live.filter((b) => b.location === "DISPLAY").reduce((s, b) => s + b.quantity, 0);
+    const stock = storeStock + displayStock;
     if (stock <= p.reorderPoint) {
       result.push({
         productId: p.id,
         sku: p.sku,
         name: p.name,
         stock,
+        storeStock,
+        displayStock,
         reorderPoint: p.reorderPoint,
         reorderQty: p.reorderQty,
         defaultSupplierId: p.defaultSupplierId,
@@ -80,6 +88,7 @@ export type ExpiringBatch = {
   sku: string;
   batchNumber: string;
   quantity: number;
+  location: BatchLocation;
   expiryDate: Date;
   daysUntilExpiry: number;
   status: "expired" | "expiring_soon";
@@ -102,6 +111,7 @@ export async function getExpiringBatches(): Promise<ExpiringBatch[]> {
       sku: b.product.sku,
       batchNumber: b.batchNumber,
       quantity: b.quantity,
+      location: b.location as BatchLocation,
       expiryDate: b.expiryDate,
       daysUntilExpiry: daysUntil(b.expiryDate),
       status: isExpired(b.expiryDate) ? "expired" : "expiring_soon",
@@ -117,8 +127,10 @@ export type CheckoutResult = {
 
 /**
  * Records a sale and decrements stock using FEFO (first-expiry-first-out):
- * each line is fulfilled from the soonest-to-expire non-expired batches first,
- * which is what keeps a pharmacy from selling fresh stock while older stock rots.
+ * each line is fulfilled from the soonest-to-expire non-expired DISPLAY batches
+ * first, which is what keeps a pharmacy from selling fresh stock while older
+ * stock rots. Only DISPLAY stock is sellable — STORE (back) stock must be
+ * transferred to the shelf first via transferStock().
  */
 export async function checkout(
   lines: CartLine[],
@@ -147,7 +159,7 @@ export async function checkout(
       if (!product) throw new Error(`Product ${line.productId} not found`);
 
       const batches = await tx.batch.findMany({
-        where: { productId: line.productId, quantity: { gt: 0 } },
+        where: { productId: line.productId, quantity: { gt: 0 }, location: "DISPLAY" },
         orderBy: { expiryDate: "asc" },
       });
       const available = batches.filter((b) => !isExpired(b.expiryDate));
@@ -176,8 +188,13 @@ export async function checkout(
       }
 
       if (remaining > 0) {
+        const storeStock = await getProductStock(line.productId, "STORE");
+        const hint =
+          storeStock > 0
+            ? ` (${storeStock} unit(s) available in store — transfer to display first)`
+            : "";
         throw new Error(
-          `Insufficient stock for ${product.name}: short by ${remaining} unit(s)`
+          `Insufficient display stock for ${product.name}: short by ${remaining} unit(s)${hint}`
         );
       }
     }
@@ -229,6 +246,7 @@ export async function receivePurchaseOrder(purchaseOrderId: string) {
           costPrice: item.unitCost,
           expiryDate,
           supplierId: po.supplierId,
+          location: "STORE", // received stock lands in the back room, not the shelf
         },
       });
 
@@ -247,6 +265,84 @@ export async function receivePurchaseOrder(purchaseOrderId: string) {
       where: { id: purchaseOrderId },
       data: { status: "RECEIVED", receivedDate: new Date() },
     });
+  });
+}
+
+/**
+ * Moves quantity from one batch to the other location, splitting/merging as
+ * needed. Used for "stock the shelf" (STORE -> DISPLAY) and to correct a
+ * mistaken transfer (DISPLAY -> STORE). The source batch is decremented; the
+ * quantity lands in an existing batch at the destination location that
+ * shares the same lot (batch number + expiry + cost) if one exists, or a new
+ * batch row otherwise — so the same physical lot never fragments needlessly.
+ */
+export async function transferStock(sourceBatchId: string, quantity: number) {
+  if (quantity <= 0) throw new Error("Transfer quantity must be positive");
+
+  return prisma.$transaction(async (tx) => {
+    const source = await tx.batch.findUnique({ where: { id: sourceBatchId } });
+    if (!source) throw new Error("Batch not found");
+    if (source.quantity < quantity) {
+      throw new Error(`Only ${source.quantity} unit(s) available to transfer`);
+    }
+
+    const destLocation: BatchLocation = source.location === "STORE" ? "DISPLAY" : "STORE";
+
+    await tx.batch.update({
+      where: { id: source.id },
+      data: { quantity: { decrement: quantity } },
+    });
+
+    const existingDest = await tx.batch.findFirst({
+      where: {
+        productId: source.productId,
+        batchNumber: source.batchNumber,
+        location: destLocation,
+        expiryDate: source.expiryDate,
+        costPrice: source.costPrice,
+      },
+    });
+
+    const destBatch = existingDest
+      ? await tx.batch.update({
+          where: { id: existingDest.id },
+          data: { quantity: { increment: quantity } },
+        })
+      : await tx.batch.create({
+          data: {
+            productId: source.productId,
+            batchNumber: source.batchNumber,
+            quantity,
+            costPrice: source.costPrice,
+            expiryDate: source.expiryDate,
+            supplierId: source.supplierId,
+            location: destLocation,
+          },
+        });
+
+    const movementType: StockMovementType =
+      destLocation === "DISPLAY" ? "TRANSFER_TO_DISPLAY" : "TRANSFER_TO_STORE";
+
+    await tx.stockMovement.createMany({
+      data: [
+        {
+          productId: source.productId,
+          batchId: source.id,
+          type: movementType,
+          quantity: -quantity,
+          note: `Transferred to ${destLocation}`,
+        },
+        {
+          productId: source.productId,
+          batchId: destBatch.id,
+          type: movementType,
+          quantity,
+          note: `Transferred from ${source.location}`,
+        },
+      ],
+    });
+
+    return destBatch;
   });
 }
 

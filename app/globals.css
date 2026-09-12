@@ -6,6 +6,10 @@
   color-scheme: light;
 }
 
+.font-logo {
+  font-family: var(--font-logo);
+}
+
 body {
   background-color: #f7f8fa;
   color: #1a1d23;

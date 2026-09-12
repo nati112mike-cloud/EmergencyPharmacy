@@ -5,13 +5,16 @@ import { prisma } from "@/lib/prisma";
 // deliveries that don't go through a formal purchase order.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const body = await req.json();
-  const { batchNumber, quantity, costPrice, expiryDate, supplierId } = body;
+  const { batchNumber, quantity, costPrice, expiryDate, supplierId, location } = body;
 
   if (!batchNumber || quantity == null || costPrice == null || !expiryDate) {
     return NextResponse.json(
       { error: "batchNumber, quantity, costPrice and expiryDate are required" },
       { status: 400 }
     );
+  }
+  if (location && location !== "STORE" && location !== "DISPLAY") {
+    return NextResponse.json({ error: "location must be STORE or DISPLAY" }, { status: 400 });
   }
 
   try {
@@ -24,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           costPrice: Number(costPrice),
           expiryDate: new Date(expiryDate),
           supplierId: supplierId || null,
+          location: location || "STORE",
         },
       });
       await tx.stockMovement.create({

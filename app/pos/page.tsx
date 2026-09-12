@@ -7,8 +7,10 @@ type Product = {
   sku: string;
   name: string;
   price: number;
-  stock: number;
+  displayStock: number;
+  storeStock: number;
   unit: string;
+  category: { name: string } | null;
 };
 
 type CartLine = { productId: string; name: string; price: number; quantity: number; stock: number };
@@ -41,10 +43,10 @@ export default function PosPage() {
       const existing = prev.find((l) => l.productId === p.id);
       if (existing) {
         return prev.map((l) =>
-          l.productId === p.id ? { ...l, quantity: Math.min(l.quantity + 1, p.stock) } : l
+          l.productId === p.id ? { ...l, quantity: Math.min(l.quantity + 1, p.displayStock) } : l
         );
       }
-      return [...prev, { productId: p.id, name: p.name, price: p.price, quantity: 1, stock: p.stock }];
+      return [...prev, { productId: p.id, name: p.name, price: p.price, quantity: 1, stock: p.displayStock }];
     });
     setQuery("");
   }
@@ -108,13 +110,21 @@ export default function PosPage() {
                   <button
                     className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => addToCart(p)}
-                    disabled={p.stock <= 0}
+                    disabled={p.displayStock <= 0}
                   >
                     <span>
                       {p.name} <span className="text-slate-400">({p.sku})</span>
+                      {p.category && (
+                        <span className="badge ml-2 bg-slate-100 text-slate-600">{p.category.name}</span>
+                      )}
                     </span>
                     <span className="text-slate-500">
-                      ${p.price.toFixed(2)} · {p.stock <= 0 ? "out of stock" : `${p.stock} in stock`}
+                      ${p.price.toFixed(2)} ·{" "}
+                      {p.displayStock <= 0
+                        ? p.storeStock > 0
+                          ? "on shelf: 0 (in store)"
+                          : "out of stock"
+                        : `${p.displayStock} on shelf`}
                     </span>
                   </button>
                 </li>

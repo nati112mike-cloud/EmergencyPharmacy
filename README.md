@@ -1,4 +1,4 @@
-# Emergency Pharmacy — Business Assistant
+# Meaza Pharmacy — Business Assistant
 
 A single-pharmacy business assistant: point-of-sale, inventory & expiry
 tracking, supplier/reorder management, and weekly growth reports, in one
@@ -19,9 +19,19 @@ built directly around that loop instead of being a generic CRUD admin:
   pulls from the soonest-to-expire batch first (`lib/business.ts#checkout`),
   which is the standard pharmacy practice for minimizing write-offs.
 - **Reordering is a suggestion engine, not a form you fill from memory.**
-  Any product whose non-expired stock falls to or below its `reorderPoint`
-  shows up under Suppliers → Reorder Suggestions, one click from becoming a
-  purchase order.
+  Any product whose non-expired stock (store + display combined) falls to or
+  below its `reorderPoint` shows up under Suppliers → Reorder Suggestions,
+  one click from becoming a purchase order.
+- **Store stock and display stock are tracked separately.** A `Batch` has a
+  `location` of `STORE` (back stock) or `DISPLAY` (shelf stock); POS only
+  sells from `DISPLAY`, so a product can be "in stock" for reordering
+  purposes while still needing someone to physically restock the shelf —
+  Inventory flags this as "Restock shelf" and a `Transfer` button moves
+  quantity from a store batch to display (or back, to correct a mistake).
+- **Categories are open-ended.** A small default set (Drug, Cosmetics,
+  Skincare, Off-Drugs, Formula Milk, Sanitation) is seeded, but they're a
+  real `Category` table, not an enum — anyone can add a new one from the
+  "Add Product" form.
 - **Growth tracking is a weekly cadence**, matching how a small pharmacy
   actually reviews performance — revenue, margin, top sellers, and the two
   things that quietly erode margin if ignored: low stock (lost sales) and
@@ -40,8 +50,9 @@ built directly around that loop instead of being a generic CRUD admin:
 
 | Model | Purpose |
 |---|---|
-| `Product` | Catalog entry: SKU, price, reorder point/quantity, default supplier |
-| `Batch` | A received lot of a product: quantity remaining, cost, expiry date |
+| `Category` | Open-ended product category (Drug, Cosmetics, Skincare, Off-Drugs, Formula Milk, Sanitation, + anything added) |
+| `Product` | Catalog entry: SKU, price, category, reorder point/quantity, default supplier |
+| `Batch` | A received lot of a product: quantity remaining, cost, expiry date, and `location` (STORE or DISPLAY) |
 | `Supplier` | Vendor contact info |
 | `PurchaseOrder` / `PurchaseOrderItem` | Orders placed with suppliers; "receive" turns items into `Batch`es |
 | `Sale` / `SaleItem` | POS transactions, recorded against specific batches (for FEFO + margin) |
@@ -67,8 +78,10 @@ data directly.
   and expiring-stock counts, top sellers.
 - **POS** (`/pos`) — search a product, build a cart, check out. Stock is
   decremented FEFO across batches automatically.
-- **Inventory** (`/inventory`) — every product with live stock, expiry
-  status, and batch-level detail; add new products; record stock receipts.
+- **Inventory** (`/inventory`) — every product with store vs. display stock,
+  category, expiry status, and batch-level detail; add new products (with
+  inline "add new category"); record stock receipts; transfer stock between
+  store and display.
 - **Suppliers** (`/suppliers`) — supplier directory, one-click purchase
   orders from reorder suggestions, and marking POs received (which creates
   the corresponding batches).
@@ -86,9 +99,11 @@ Roughly in the order they'd pay off for a single pharmacy:
 2. **Low-stock/expiry email or SMS alerts** — a scheduled job hitting
    `getLowStockProducts()` / `getExpiringBatches()` and notifying staff
    instead of requiring someone to open the dashboard.
-3. **Multi-branch support** — add a `Location` model and scope `Batch`,
-   `Sale`, and reporting queries by it; the schema was kept simple
-   deliberately since this is currently a single-location tool.
+3. **Multi-branch support** — add a `Branch` model and scope `Batch`, `Sale`,
+   and reporting queries by it (distinct from the existing store/display
+   `location` on `Batch`, which is about shelf vs. back-room within one
+   branch); the schema was kept simple deliberately since this is currently
+   a single-location tool.
 4. **Role-based accounts** — currently there's no login; add auth (e.g.
    NextAuth) once more than one person uses the system, so sales/edits are
    attributed to a real user instead of a free-text cashier name.
