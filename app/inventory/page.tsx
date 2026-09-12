@@ -48,6 +48,7 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [batchFormFor, setBatchFormFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -102,9 +103,14 @@ export default function InventoryPage() {
           <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
           <p className="text-slate-500">Store vs. display stock, expiry tracking, and reorder points.</p>
         </div>
-        <button className="btn" onClick={() => setShowAddProduct(true)}>
-          + Add Product
-        </button>
+        <div className="flex gap-2">
+          <button className="btn-secondary" onClick={() => setShowImport(true)}>
+            Import from Excel
+          </button>
+          <button className="btn" onClick={() => setShowAddProduct(true)}>
+            + Add Product
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -289,6 +295,13 @@ export default function InventoryPage() {
             setShowAddProduct(false);
             load();
           }}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onImported={() => load()}
         />
       )}
     </div>
@@ -526,6 +539,137 @@ function AddProductModal({
             onClick={submit}
           >
             Save Product
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ImportRowResult = {
+  row: number;
+  status: "created" | "updated" | "error";
+  productName?: string;
+  batchNumber?: string;
+  message?: string;
+};
+
+type ImportSummary = {
+  totalRows: number;
+  categoriesCreated: number;
+  suppliersCreated: number;
+  productsCreated: number;
+  productsUpdated: number;
+  batchesCreated: number;
+  rows: ImportRowResult[];
+};
+
+function ImportModal({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [summary, setSummary] = useState<ImportSummary | null>(null);
+
+  async function upload() {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    setSummary(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/inventory/import", { method: "POST", body: formData });
+    setUploading(false);
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error ?? "Import failed");
+      return;
+    }
+    setSummary(data);
+    onImported();
+  }
+
+  const errorRows = summary?.rows.filter((r) => r.status === "error") ?? [];
+  const warningRows = summary?.rows.filter((r) => r.status !== "error" && r.message) ?? [];
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="mb-2 text-lg font-semibold">Import Inventory from Excel</h2>
+        <p className="mb-4 text-sm text-slate-500">
+          Upload a spreadsheet with product name, batch number, quantity, expiry date, category,
+          and supplier — one row per stock lot. Existing products are matched by SKU (or by name if
+          no SKU column is given) and get a new batch added; unrecognized categories and suppliers
+          are created automatically.
+        </p>
+
+        <a
+          href="/api/inventory/import/template"
+          className="mb-4 inline-block text-sm font-medium text-brand-600"
+        >
+          ⬇ Download template (.xlsx)
+        </a>
+
+        <div className="flex items-center gap-3">
+          <input
+            type="file"
+            accept=".xlsx"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="text-sm"
+          />
+          <button className="btn" disabled={!file || uploading} onClick={upload}>
+            {uploading ? "Importing…" : "Upload"}
+          </button>
+        </div>
+
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+        {summary && (
+          <div className="mt-4 space-y-3">
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-sm md:grid-cols-3">
+              <div>Rows processed: <strong>{summary.totalRows}</strong></div>
+              <div>Products created: <strong>{summary.productsCreated}</strong></div>
+              <div>Products updated: <strong>{summary.productsUpdated}</strong></div>
+              <div>Batches added: <strong>{summary.batchesCreated}</strong></div>
+              <div>Categories added: <strong>{summary.categoriesCreated}</strong></div>
+              <div>Suppliers added: <strong>{summary.suppliersCreated}</strong></div>
+            </div>
+
+            {warningRows.length > 0 && (
+              <div>
+                <p className="mb-1 text-sm font-medium text-amber-700">Warnings</p>
+                <ul className="space-y-1 text-sm text-amber-700">
+                  {warningRows.map((r) => (
+                    <li key={r.row}>
+                      Row {r.row} ({r.productName}): {r.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {errorRows.length > 0 && (
+              <div>
+                <p className="mb-1 text-sm font-medium text-red-700">Errors (not imported)</p>
+                <ul className="space-y-1 text-sm text-red-700">
+                  {errorRows.map((r) => (
+                    <li key={r.row}>
+                      Row {r.row}
+                      {r.productName ? ` (${r.productName})` : ""}: {r.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {errorRows.length === 0 && warningRows.length === 0 && (
+              <p className="text-sm text-emerald-700">All rows imported cleanly.</p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end">
+          <button className="btn-secondary" onClick={onClose}>
+            Close
           </button>
         </div>
       </div>

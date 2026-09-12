@@ -81,12 +81,38 @@ data directly.
 - **Inventory** (`/inventory`) — every product with store vs. display stock,
   category, expiry status, and batch-level detail; add new products (with
   inline "add new category"); record stock receipts; transfer stock between
-  store and display.
+  store and display; **bulk-import products and stock from an Excel file**
+  (see below).
 - **Suppliers** (`/suppliers`) — supplier directory, one-click purchase
   orders from reorder suggestions, and marking POs received (which creates
   the corresponding batches).
 - **Reports** (`/reports`) — week-by-week revenue, cost, profit, top sellers,
   low stock, and expiring stock, browsable by week.
+
+## Bulk inventory import (Excel)
+
+Inventory → "Import from Excel" uploads an `.xlsx` and creates/updates
+products and stock batches from it, one row per lot. "Download template"
+gives you the exact expected headers with one filled-in example row.
+
+Required columns: **Name, Batch Number, Quantity, Expiry Date**. Recommended:
+**Category, Supplier** (created automatically if new). Optional: SKU, Price,
+Unit Cost, Location (`STORE` or `DISPLAY`, defaults to `STORE`), Unit,
+Reorder Point, Reorder Qty. Column headers are matched case- and
+punctuation-insensitively, so "Batch Number", "batch_number", and "Batch #"
+all work.
+
+Products are matched by **SKU** when given, otherwise by exact **name** —
+so multiple rows for the same product (different batches, different
+shipments) correctly add batches to one product instead of duplicating it.
+A product created without a Price defaults to $0.00 and the import summary
+flags it as a warning so it gets caught before anything sells at that price.
+Bad rows (missing quantity, unparseable date, etc.) are reported per-row
+without failing the rest of the import.
+
+Implementation: `lib/inventoryImport.ts` (parsing + upsert logic, via
+[`exceljs`](https://github.com/exceljs/exceljs)), `app/api/inventory/import`
+(upload) and `app/api/inventory/import/template` (template download).
 
 ## Growth roadmap (natural next steps)
 
