@@ -1,0 +1,161 @@
+// Emergency Pharmacy — business assistant data model
+// SQLite by default (zero-config local dev). Point DATABASE_URL at Postgres
+// for production; the schema is portable (no SQLite-only features used).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite has no native enum support, so the following are plain strings;
+// see lib/types.ts for the valid value unions (PurchaseOrderStatus,
+// StockMovementType, PaymentMethod).
+
+model Supplier {
+  id            String          @id @default(cuid())
+  name          String
+  contactName   String?
+  phone         String?
+  email         String?
+  address       String?
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  products      Product[]
+  batches       Batch[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  sku               String   @unique
+  name              String
+  category          String?
+  unit              String   @default("unit") // e.g. box, bottle, strip
+  description       String?
+  price             Float    // current sale price
+  reorderPoint      Int      @default(10) // trigger reorder when total stock <= this
+  reorderQty        Int      @default(20) // suggested quantity to reorder
+  requiresRx        Boolean  @default(false)
+  defaultSupplierId String?
+  defaultSupplier   Supplier? @relation(fields: [defaultSupplierId], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  batches            Batch[]
+  saleItems          SaleItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  stockMovements     StockMovement[]
+
+  @@index([category])
+}
+
+model Batch {
+  id           String    @id @default(cuid())
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id])
+  batchNumber  String
+  quantity     Int // remaining quantity in this batch
+  costPrice    Float // unit cost for margin calculations
+  expiryDate   DateTime
+  receivedDate DateTime  @default(now())
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id])
+
+  saleItems      SaleItem[]
+  stockMovements StockMovement[]
+
+  @@index([productId])
+  @@index([expiryDate])
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  supplierId   String
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  status       String              @default("DRAFT") // PurchaseOrderStatus
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  items PurchaseOrderItem[]
+
+  @@index([status])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  quantity        Int
+  unitCost        Float
+
+  @@index([purchaseOrderId])
+}
+
+model Sale {
+  id            String        @id @default(cuid())
+  saleDate      DateTime      @default(now())
+  totalAmount   Float
+  paymentMethod String  @default("CASH") // PaymentMethod
+  cashierName   String?
+  items         SaleItem[]
+
+  @@index([saleDate])
+}
+
+model SaleItem {
+  id         String  @id @default(cuid())
+  saleId     String
+  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  batchId    String?
+  batch      Batch?  @relation(fields: [batchId], references: [id])
+  quantity   Int
+  unitPrice  Float // price charged at time of sale
+  unitCost   Float // cost at time of sale (for margin reporting)
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model StockMovement {
+  id         String            @id @default(cuid())
+  productId  String
+  product    Product           @relation(fields: [productId], references: [id])
+  batchId    String?
+  batch      Batch?            @relation(fields: [batchId], references: [id])
+  type       String            // StockMovementType
+  quantity   Int // positive = stock in, negative = stock out
+  note       String?
+  createdAt  DateTime          @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model WeeklyReport {
+  id              String   @id @default(cuid())
+  weekStart       DateTime
+  weekEnd         DateTime
+  totalRevenue    Float
+  totalCost       Float
+  totalProfit     Float
+  totalSalesCount Int
+  topSellersJson  String // JSON-encoded array, kept simple for SQLite
+  lowStockJson    String
+  expiringJson    String
+  createdAt       DateTime @default(now())
+
+  @@unique([weekStart, weekEnd])
+}
