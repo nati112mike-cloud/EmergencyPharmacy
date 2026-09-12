@@ -46,9 +46,11 @@ built directly around that loop instead of being a generic CRUD admin:
 
 - **Next.js 14 (App Router) + TypeScript** — one codebase for UI and API
   routes, deployable as a single service.
-- **Prisma ORM**, defaulting to a local **SQLite** file for zero-config
-  development. Swap `DATABASE_URL` for a Postgres connection string to run
-  the same schema in production — nothing else changes.
+- **Prisma ORM + Postgres**, with real migrations (`prisma/migrations/`) via
+  `prisma migrate` — `npm run build` runs `prisma migrate deploy` before
+  `next build`, so pushing to `main` and deploying applies any new schema
+  changes automatically. Point `DATABASE_URL` at any Postgres (a local one
+  for dev, [Neon](https://neon.tech) in production — see Deploying below).
 - **Tailwind CSS** for styling.
 
 ## Data model (`prisma/schema.prisma`)
@@ -68,18 +70,25 @@ built directly around that loop instead of being a generic CRUD admin:
 
 ## Getting started
 
+You need a Postgres database to develop against — either a local one or a
+free dev database at [neon.tech](https://neon.tech) (same thing production
+uses, so this is the path of least surprise).
+
 ```bash
 npm install
 cp .env.example .env
-# Replace the SESSION_SECRET placeholder in .env with a real random value:
-#   openssl rand -hex 32
-npm run db:push             # create the SQLite schema
+# Edit .env:
+#  - DATABASE_URL: your local Postgres, or a Neon connection string
+#  - SESSION_SECRET: a real random value — openssl rand -hex 32
+npm run db:migrate          # create the schema (creates prisma/migrations/ on first run)
 npm run db:seed             # load sample suppliers/products/sales + two default logins
 npm run dev                 # http://localhost:3000
 ```
 
 `npm run db:studio` opens Prisma Studio if you want to inspect/edit the raw
-data directly.
+data directly. `npm run db:push` is available for quick throwaway schema
+experiments, but prefer `db:migrate` for anything you're going to commit —
+it's what keeps `prisma/migrations/` (and therefore production) in sync.
 
 **Default logins** (created by `db:seed` — change these immediately, see
 Authentication below): `admin` / `admin123` (Admin role), `cashier` /
@@ -98,9 +107,14 @@ started holding payment and invoice data.
 - Sessions are a signed, expiring token (`lib/auth/session.ts`) in an
   `httpOnly` cookie, verified with the Web Crypto API so the same code works
   in both the Edge-runtime middleware and Node API routes.
-- **Users** (`/users`, Admin only) — add or remove staff logins. An admin
-  can't remove their own account or the last remaining admin, so the app
-  can never lock everyone out.
+- **Users** (`/users`, Admin only) — add or remove staff logins, or
+  **reset anyone's password** directly (no email required — hand the new
+  password to them yourself). An admin can't remove their own account or
+  the last remaining admin, so the app can never lock everyone out.
+- **Login is rate-limited**: 5 failed attempts locks that account for 15
+  minutes (`failedLoginAttempts`/`lockedUntil` on `User`), even against the
+  correct password — resets automatically on a successful login or an admin
+  password reset.
 - Anyone can change their own password from the account menu in the top
   right (needs the current password).
 - POS pre-fills the cashier name from whoever is signed in (still editable).
@@ -130,9 +144,30 @@ leaked. See `.env.example` for how to generate one.
   (see below).
 - **Reports** (`/reports`) — week-by-week revenue, cost, profit, top sellers,
   low stock, and expiring stock, browsable by week.
-- **Users** (`/users`, Admin only) — add or remove staff logins.
+- **Users** (`/users`, Admin only) — add/remove/reset staff logins, and send
+  a test notification digest email (see Notifications below).
 - **Login** (`/login`) — the whole app requires signing in; see
   Authentication above.
+
+## Notifications (email digest)
+
+Once `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/`NOTIFY_EMAIL_TO`
+are set (see `.env.example` — works with Gmail via an
+[App Password](https://myaccount.google.com/apppasswords), or any SMTP
+provider), a daily email summarizes exactly what needs attention: overdue
+and soon-due payments, low-stock products, and expiring/expired batches
+(`lib/notifications.ts`). It deliberately isn't "only what's new" — an
+unpaid bill or a still-low shelf keeps showing up until it's actually
+resolved, since going quiet after one email is how these things get
+forgotten again.
+
+- **Sending it**: `GET /api/notifications/run`, authenticated with a
+  `CRON_SECRET` bearer token (not a login session) — `vercel.json` schedules
+  this daily once deployed. Locally or without Vercel Cron, hit the same URL
+  from any scheduler.
+- **Testing it**: `/users` → "Send test digest now" (Admin only, uses your
+  normal session) sends immediately, so you can confirm SMTP is configured
+  correctly without waiting for the schedule.
 
 ## Bulk inventory import (Excel)
 
@@ -203,35 +238,68 @@ Roughly in the order they'd pay off for a single pharmacy:
    locally vendored language data so it doesn't depend on a CDN fetch at
    runtime, or a cloud OCR/vision API) so JPG/PNG invoice photos get the
    same automatic line-item detection PDFs already have.
-2. **Barcode scanning at POS** — swap the search box for a scanner input;
+2. **SMS notifications** — the digest currently only emails; add SMS (e.g.
+   Twilio) for whoever wants a text instead of/alongside email.
+3. **Object storage for invoice files** — `storage/invoices/` is local disk,
+   which doesn't survive most serverless/container redeploys (Vercel
+   included). Swap `lib/fileStorage.ts` for Vercel Blob or S3 before
+   uploaded invoices are something you rely on long-term.
+4. **Barcode scanning at POS** — swap the search box for a scanner input;
    the API already keys everything off `sku`.
-3. **Prescription/customer records** — a `Customer` + `Prescription` model
+5. **Prescription/customer records** — a `Customer` + `Prescription` model
    linked to `Sale`, plus refill-due reminders. Natural next schema addition.
-4. **Low-stock/expiry/payment email or SMS alerts** — a scheduled job
-   hitting `getLowStockProducts()` / `getExpiringBatches()` /
-   `getUpcomingPayments()` and notifying staff instead of requiring someone
-   to open the dashboard.
-5. **Multi-branch support** — add a `Branch` model and scope `Batch`, `Sale`,
+6. **Multi-branch support** — add a `Branch` model and scope `Batch`, `Sale`,
    and reporting queries by it (distinct from the existing store/display
    `location` on `Batch`, which is about shelf vs. back-room within one
    branch); the schema was kept simple deliberately since this is currently
    a single-location tool.
-6. **Supplier price comparison** — track cost history per supplier per
+7. **Supplier price comparison** — track cost history per supplier per
    product to spot when a vendor's price creeps up.
-7. **Password reset / rate limiting** — there's no "forgot password" flow
-   (an admin resets it by deleting and recreating the account for now) and
-   no login-attempt throttling; worth adding once this is reachable from
-   outside a trusted network.
-8. **Real batch-level receiving on POs** — `receivePurchaseOrder` currently
+8. **Self-service "forgot password"** — right now an admin resets a forgotten
+   password from `/users`; a real email-based reset flow would remove that
+   dependency on an admin being reachable.
+9. **Real batch-level receiving on POs** — `receivePurchaseOrder` currently
    defaults new batches to a 2-year placeholder expiry; add expiry/batch
    number entry to the "Mark Received" flow once real supplier paperwork is
    available.
 
+## Deploying to production (Vercel + Neon)
+
+1. **Database** — create a free project at [neon.tech](https://neon.tech),
+   then copy its connection string (Neon's dashboard → Connect).
+2. **Push this repo to GitHub** if it isn't already.
+3. **Import the project into Vercel** ([vercel.com/new](https://vercel.com/new))
+   from that GitHub repo — it auto-detects Next.js, no config needed.
+4. **Set environment variables** in the Vercel project (Settings →
+   Environment Variables) — see `.env.example` for the full list:
+   `DATABASE_URL` (the Neon string), `SESSION_SECRET` (generate a fresh one
+   for production — don't reuse your local dev value), and, if you want the
+   notification digest, `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/
+   `NOTIFY_EMAIL_TO`/`CRON_SECRET`.
+5. **Deploy.** Vercel runs `npm run build`, which runs `prisma migrate
+   deploy` first — your schema is created automatically, no manual step.
+6. **Create your first real admin account** — don't run `npm run db:seed`
+   against production (it deletes everything, including whatever's already
+   there, on every run). Instead, from your own machine with `DATABASE_URL`
+   pointed at the Neon database:
+   ```bash
+   npm run create-admin -- youradmin "a-strong-password" "Your Name"
+   ```
+   This only ever touches that one account — safe to run any time, on a
+   fresh database or one already holding real data.
+7. **Notifications cron** — `vercel.json` already schedules a daily digest
+   (`/api/notifications/run`, 7am UTC — edit the cron expression there for a
+   different time) once the `SMTP_*`/`NOTIFY_EMAIL_TO`/`CRON_SECRET` env vars
+   above are set. Vercel Cron is a paid-plan feature; on the free Hobby plan,
+   trigger the same URL from any external scheduler instead (it needs an
+   `Authorization: Bearer <CRON_SECRET>` header).
+
 ## Notes on running this in production
 
-- Switch `DATABASE_URL` to Postgres and run `npx prisma migrate deploy`
-  instead of `db push` once you have a real migration history.
-- Back up the database on a schedule — sales and inventory data is the
-  business's operating record.
+- Back up the Neon database on a schedule (Neon supports point-in-time
+  restore, but check the retention window on your plan) — sales, inventory,
+  and payment data is the business's operating record.
+- See the roadmap above for the invoice-file-storage caveat (local disk
+  doesn't persist on Vercel) before relying on uploaded invoices long-term.
 - Replace local-disk invoice storage (`lib/fileStorage.ts`) with real object
   storage before deploying anywhere without a persistent filesystem.

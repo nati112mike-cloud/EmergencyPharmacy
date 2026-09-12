@@ -9,6 +9,9 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,6 +38,15 @@ export default function UsersPage() {
       return;
     }
     load();
+  }
+
+  async function sendTestDigest() {
+    setTestSending(true);
+    setTestResult("");
+    const res = await fetch("/api/notifications/test", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    setTestSending(false);
+    setTestResult(res.ok ? `Sent to ${data.sentTo}.` : data.error ?? "Failed to send");
   }
 
   if (forbidden) {
@@ -80,7 +92,10 @@ export default function UsersPage() {
                     <span className={`badge ${u.role === "ADMIN" ? "badge-ok" : "text-slate-500"}`}>{u.role}</span>
                   </td>
                   <td>{new Date(u.createdAt).toLocaleDateString()}</td>
-                  <td className="text-right">
+                  <td className="space-x-3 text-right">
+                    <button className="text-sm font-medium text-brand-600" onClick={() => setResetTarget(u)}>
+                      Reset Password
+                    </button>
                     <button className="text-sm text-red-600" onClick={() => removeUser(u.id)}>
                       Remove
                     </button>
@@ -92,6 +107,19 @@ export default function UsersPage() {
         </div>
       )}
 
+      <div className="card">
+        <h2 className="mb-1 font-semibold text-slate-900">Notifications</h2>
+        <p className="mb-3 text-sm text-slate-500">
+          A digest of overdue/soon-due payments, low stock, and expiring stock is emailed on a
+          schedule once SMTP_HOST/SMTP_USER/SMTP_PASSWORD/NOTIFY_EMAIL_TO are set (see README).
+          Use this to check it's configured correctly.
+        </p>
+        <button className="btn-secondary" disabled={testSending} onClick={sendTestDigest}>
+          {testSending ? "Sending…" : "Send test digest now"}
+        </button>
+        {testResult && <p className="mt-2 text-sm text-slate-600">{testResult}</p>}
+      </div>
+
       {showAdd && (
         <AddUserModal
           onClose={() => setShowAdd(false)}
@@ -101,6 +129,87 @@ export default function UsersPage() {
           }}
         />
       )}
+
+      {resetTarget && (
+        <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />
+      )}
+    </div>
+  );
+}
+
+function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit() {
+    if (newPassword !== confirmPassword) {
+      setError("Passwords don't match");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    const res = await fetch(`/api/users/${user.id}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword }),
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to reset password");
+      return;
+    }
+    setSuccess(true);
+  }
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="mb-4 text-lg font-semibold">Reset Password — {user.name}</h2>
+        {success ? (
+          <>
+            <p className="text-sm text-emerald-700">
+              Password reset. Share the new password with {user.name} directly.
+            </p>
+            <div className="mt-4 flex justify-end">
+              <button className="btn" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-3">
+              <input
+                className="input"
+                type="password"
+                placeholder="New password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <input
+                className="input"
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+            {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="btn-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="btn" disabled={submitting || !newPassword || !confirmPassword} onClick={submit}>
+                Reset
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

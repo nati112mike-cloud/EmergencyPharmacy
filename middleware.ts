@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
 
-// Everything requires a signed-in session except the login page itself and
-// the login API it calls. Static assets are excluded so the login page can
-// actually load its CSS/JS before there's a session.
+// Everything requires a signed-in session except the login page itself, the
+// login API it calls, and the notifications cron endpoint (which Vercel
+// Cron calls with no session — it authenticates via CRON_SECRET instead,
+// checked inside that route). Static assets are excluded so the login page
+// can actually load its CSS/JS before there's a session.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|login|api/auth/login).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|login|api/auth/login|api/notifications/run).*)",
+  ],
 };
 
 export async function middleware(req: NextRequest) {

@@ -1,28 +1,31 @@
-// Emergency Pharmacy — business assistant data model
-// SQLite by default (zero-config local dev). Point DATABASE_URL at Postgres
-// for production; the schema is portable (no SQLite-only features used).
+// Meaza Pharmacy — business assistant data model. Postgres (matches
+// production on Neon/Vercel); point DATABASE_URL at any Postgres instance,
+// including a local one for development — see README "Getting started".
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// SQLite has no native enum support, so the following are plain strings;
+// Kept as plain strings (not native Postgres enums) since this schema
+// started on SQLite, which has no enum support — no behavioral difference,
 // see lib/types.ts for the valid value unions (PurchaseOrderStatus,
 // StockMovementType, PaymentMethod).
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  passwordHash String // "<salt>:<hash>", see lib/auth/password.ts
-  name         String
-  role         String   @default("STAFF") // UserRole: ADMIN | STAFF
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  username            String    @unique
+  passwordHash        String // "<salt>:<hash>", see lib/auth/password.ts
+  name                String
+  role                String    @default("STAFF") // UserRole: ADMIN | STAFF
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 model Supplier {
