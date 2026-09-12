@@ -240,10 +240,11 @@ Roughly in the order they'd pay off for a single pharmacy:
    same automatic line-item detection PDFs already have.
 2. **SMS notifications** — the digest currently only emails; add SMS (e.g.
    Twilio) for whoever wants a text instead of/alongside email.
-3. **Object storage for invoice files** — `storage/invoices/` is local disk,
-   which doesn't survive most serverless/container redeploys (Vercel
-   included). Swap `lib/fileStorage.ts` for Vercel Blob or S3 before
-   uploaded invoices are something you rely on long-term.
+3. **Object storage for invoice files, if deploying to Vercel** —
+   `storage/invoices/` is local disk, which doesn't survive Vercel's
+   serverless redeploys (the Docker self-host path's `invoice_storage`
+   volume doesn't have this problem). Swap `lib/fileStorage.ts` for Vercel
+   Blob or S3 before relying on uploaded invoices long-term on Vercel.
 4. **Barcode scanning at POS** — swap the search box for a scanner input;
    the API already keys everything off `sku`.
 5. **Prescription/customer records** — a `Customer` + `Prescription` model
@@ -264,6 +265,14 @@ Roughly in the order they'd pay off for a single pharmacy:
    available.
 
 ## Deploying to production (Vercel + Neon)
+
+Both free forever, no card required. One caveat: Vercel's free **Hobby**
+plan is licensed for personal/non-commercial use only — an actual running
+business technically doesn't qualify, per Vercel's terms of service.
+Enforcement risk for a tiny single-shop internal tool is low in practice,
+but it isn't strictly compliant; Vercel Pro ($20/month) removes that
+restriction, or use the self-hosting path below instead, which has no such
+restriction on any plan.
 
 1. **Database** — create a free project at [neon.tech](https://neon.tech),
    then copy its connection string (Neon's dashboard → Connect).
@@ -290,16 +299,80 @@ Roughly in the order they'd pay off for a single pharmacy:
 7. **Notifications cron** — `vercel.json` already schedules a daily digest
    (`/api/notifications/run`, 7am UTC — edit the cron expression there for a
    different time) once the `SMTP_*`/`NOTIFY_EMAIL_TO`/`CRON_SECRET` env vars
-   above are set. Vercel Cron is a paid-plan feature; on the free Hobby plan,
-   trigger the same URL from any external scheduler instead (it needs an
-   `Authorization: Bearer <CRON_SECRET>` header).
+   above are set. This works on the free Hobby plan as-is (Hobby allows up
+   to 2 cron jobs at once-per-day frequency, UTC only — exactly what this
+   is); Pro removes those limits if you ever need more/faster jobs.
+
+## Self-hosting with Docker (free forever, no plan restrictions)
+
+Everything needed to run this on your own server — a spare computer, a
+free-tier cloud VM, anything with Docker — instead of Vercel. No usage
+limits, no ToS restriction on business use, and you own the machine.
+
+**1. Get a server.** In order of least to most effort:
+   - **A computer already at the pharmacy** (a spare PC, mini-PC, or
+     Raspberry Pi) on the store's network. Completely free. If only staff on
+     that same network need access, you don't even need a domain or public
+     IP — skip straight to step 4 and browse to `http://<its-local-ip>`.
+   - **A free-tier cloud VM** if you want access from anywhere, not just
+     in-store — e.g. [Oracle Cloud's "Always Free" tier](https://www.oracle.com/cloud/free/)
+     (an ARM or AMD VM, never billed unless you explicitly upgrade — note
+     signup asks for a card for identity verification even though the free
+     resources themselves are never charged).
+
+**2. Point a domain at it** (skip entirely for LAN-only use above — just
+   set `DOMAIN=localhost` in step 3). Buy a cheap domain or use a free
+   dynamic-DNS service, create an A record to the server's public IP, and
+   make sure ports 80 and 443 are open in its firewall/cloud security group
+   (Caddy needs 80 for the one-time HTTPS certificate request).
+
+**3. Install Docker and get the code:**
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   git clone <your-repo-url>
+   cd EmergencyPharmacy
+   cp .env.docker.example .env
+   nano .env   # fill in DOMAIN, POSTGRES_PASSWORD, SESSION_SECRET, SMTP_*, CRON_SECRET
+   ```
+
+**4. Start it:**
+   ```bash
+   docker compose up -d --build
+   ```
+   First run takes a few minutes (building the image, then Caddy requesting
+   its Let's Encrypt certificate). `docker compose logs -f app` to watch.
+
+**5. Create your first admin account** — never run `db:seed` against real
+   data (it wipes everything every time); this only touches one account:
+   ```bash
+   docker compose exec app npm run create-admin -- youradmin "a-strong-password" "Your Name"
+   ```
+   Want sample data to explore first? `docker compose exec app npm run
+   db:seed` — but only before any real data exists.
+
+**6. Schedule the notification digest** — there's no Vercel Cron here, so
+   add a line to the host's own crontab (`crontab -e`):
+   ```
+   0 7 * * * curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" https://your-domain/api/notifications/run
+   ```
+
+**Updating:** `git pull && docker compose up -d --build` — migrations run
+automatically on container start (`docker-entrypoint.sh`), no separate step.
+
+**Backups:** the database lives in the `pgdata` Docker volume.
+```bash
+docker compose exec db pg_dump -U pharmacy pharmacy > backup-$(date +%F).sql
+# restore:
+cat backup-2026-01-01.sql | docker compose exec -T db psql -U pharmacy pharmacy
+```
 
 ## Notes on running this in production
 
-- Back up the Neon database on a schedule (Neon supports point-in-time
-  restore, but check the retention window on your plan) — sales, inventory,
-  and payment data is the business's operating record.
-- See the roadmap above for the invoice-file-storage caveat (local disk
-  doesn't persist on Vercel) before relying on uploaded invoices long-term.
+- Back up the database on a schedule regardless of which path you use —
+  sales, inventory, and payment data is the business's operating record.
+  (Neon supports point-in-time restore on its own; self-hosted, use the
+  `pg_dump` approach above.)
 - Replace local-disk invoice storage (`lib/fileStorage.ts`) with real object
-  storage before deploying anywhere without a persistent filesystem.
+  storage before deploying anywhere without a persistent filesystem — this
+  matters for Vercel (serverless, no persistent disk) but not for the
+  Docker self-host path above (the `invoice_storage` volume persists fine).

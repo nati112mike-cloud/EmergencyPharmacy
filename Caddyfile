@@ -1,0 +1,6 @@
+{$DOMAIN} {
+	# Automatic HTTPS via Let's Encrypt for a real domain. If DOMAIN=localhost,
+	# Caddy switches to its internal CA automatically (self-signed — your
+	# browser will warn once, which is expected for local testing).
+	reverse_proxy app:3000
+}
