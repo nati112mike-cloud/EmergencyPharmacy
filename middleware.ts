@@ -1,0 +1,24 @@
+import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
+
+// Everything requires a signed-in session except the login page itself and
+// the login API it calls. Static assets are excluded so the login page can
+// actually load its CSS/JS before there's a session.
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|login|api/auth/login).*)"],
+};
+
+export async function middleware(req: NextRequest) {
+  const token = req.cookies.get(SESSION_COOKIE)?.value;
+  const session = token ? await verifySessionToken(token) : null;
+
+  if (session) return NextResponse.next();
+
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  const loginUrl = new URL("/login", req.url);
+  loginUrl.searchParams.set("redirect", req.nextUrl.pathname);
+  return NextResponse.redirect(loginUrl);
+}

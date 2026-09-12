@@ -27,6 +27,10 @@ export default function PosPage() {
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => u && setCashierName((prev) => prev || u.name))
+      .catch(() => {});
   }, []);
 
   const results = useMemo(() => {

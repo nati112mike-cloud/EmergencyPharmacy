@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_CATEGORY_NAMES } from "../lib/types";
+import { hashPassword } from "../lib/auth/password";
 
 const prisma = new PrismaClient();
 
@@ -23,6 +24,24 @@ async function main() {
   await prisma.category.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.weeklyReport.deleteMany();
+  await prisma.user.deleteMany();
+
+  await prisma.user.create({
+    data: {
+      username: "admin",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: hashPassword("admin123"),
+    },
+  });
+  await prisma.user.create({
+    data: {
+      username: "cashier",
+      name: "Cashier",
+      role: "STAFF",
+      passwordHash: hashPassword("cashier123"),
+    },
+  });
 
   const [pharmaCorp, medSupply, wellnessDist] = await Promise.all([
     prisma.supplier.create({
@@ -239,6 +258,9 @@ async function main() {
 
   console.log(
     `Seeded ${products.length} products across ${DEFAULT_CATEGORY_NAMES.length} categories and 3 suppliers with sales history.`
+  );
+  console.log(
+    "\nDefault logins (CHANGE THESE before real use):\n  admin / admin123 (Admin)\n  cashier / cashier123 (Staff)\n"
   );
 }
 

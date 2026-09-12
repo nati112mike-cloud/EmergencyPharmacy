@@ -64,19 +64,50 @@ built directly around that loop instead of being a generic CRUD admin:
 | `StockMovement` | Audit trail of every stock in/out event |
 | `Bill` | Rent, salary, or other recurring/one-off payables (not tied to a supplier delivery) |
 | `WeeklyReport` | Persisted snapshot of a week's revenue/profit/alerts |
+| `User` | A staff login: username, hashed password, name, role (ADMIN or STAFF) |
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env        # defaults to a local SQLite file
+cp .env.example .env
+# Replace the SESSION_SECRET placeholder in .env with a real random value:
+#   openssl rand -hex 32
 npm run db:push             # create the SQLite schema
-npm run db:seed             # load sample suppliers/products/sales
+npm run db:seed             # load sample suppliers/products/sales + two default logins
 npm run dev                 # http://localhost:3000
 ```
 
 `npm run db:studio` opens Prisma Studio if you want to inspect/edit the raw
 data directly.
+
+**Default logins** (created by `db:seed` — change these immediately, see
+Authentication below): `admin` / `admin123` (Admin role), `cashier` /
+`cashier123` (Staff role).
+
+## Authentication
+
+The whole app — every page and API route — requires a signed-in session;
+`middleware.ts` redirects anywhere else to `/login` (and returns a plain 401
+for API calls) unless a valid session cookie is present. There was
+previously no login at all, which stopped being acceptable once the app
+started holding payment and invoice data.
+
+- Passwords are hashed with `scrypt` + a random salt per user
+  (`lib/auth/password.ts`) — never stored or logged in plain text.
+- Sessions are a signed, expiring token (`lib/auth/session.ts`) in an
+  `httpOnly` cookie, verified with the Web Crypto API so the same code works
+  in both the Edge-runtime middleware and Node API routes.
+- **Users** (`/users`, Admin only) — add or remove staff logins. An admin
+  can't remove their own account or the last remaining admin, so the app
+  can never lock everyone out.
+- Anyone can change their own password from the account menu in the top
+  right (needs the current password).
+- POS pre-fills the cashier name from whoever is signed in (still editable).
+
+Change `SESSION_SECRET` in `.env` any time to instantly invalidate every
+existing session (forces everyone to log in again) — useful if it's ever
+leaked. See `.env.example` for how to generate one.
 
 ## Pages
 
@@ -99,6 +130,9 @@ data directly.
   (see below).
 - **Reports** (`/reports`) — week-by-week revenue, cost, profit, top sellers,
   low stock, and expiring stock, browsable by week.
+- **Users** (`/users`, Admin only) — add or remove staff logins.
+- **Login** (`/login`) — the whole app requires signing in; see
+  Authentication above.
 
 ## Bulk inventory import (Excel)
 
@@ -165,30 +199,29 @@ business owes before it accumulates:
 
 Roughly in the order they'd pay off for a single pharmacy:
 
-1. **Accounts/login** — there is currently no authentication at all; anyone
-   with the URL has full access, including payment and invoice data. This
-   moved to the top of the list once financial data entered the picture —
-   add auth (e.g. NextAuth) so sales/edits/payments are attributed to a real
-   user instead of open access.
-2. **OCR for photographed invoices** — wire up real OCR (`tesseract.js` with
+1. **OCR for photographed invoices** — wire up real OCR (`tesseract.js` with
    locally vendored language data so it doesn't depend on a CDN fetch at
    runtime, or a cloud OCR/vision API) so JPG/PNG invoice photos get the
    same automatic line-item detection PDFs already have.
-3. **Barcode scanning at POS** — swap the search box for a scanner input;
+2. **Barcode scanning at POS** — swap the search box for a scanner input;
    the API already keys everything off `sku`.
-4. **Prescription/customer records** — a `Customer` + `Prescription` model
+3. **Prescription/customer records** — a `Customer` + `Prescription` model
    linked to `Sale`, plus refill-due reminders. Natural next schema addition.
-5. **Low-stock/expiry/payment email or SMS alerts** — a scheduled job
+4. **Low-stock/expiry/payment email or SMS alerts** — a scheduled job
    hitting `getLowStockProducts()` / `getExpiringBatches()` /
    `getUpcomingPayments()` and notifying staff instead of requiring someone
    to open the dashboard.
-6. **Multi-branch support** — add a `Branch` model and scope `Batch`, `Sale`,
+5. **Multi-branch support** — add a `Branch` model and scope `Batch`, `Sale`,
    and reporting queries by it (distinct from the existing store/display
    `location` on `Batch`, which is about shelf vs. back-room within one
    branch); the schema was kept simple deliberately since this is currently
    a single-location tool.
-7. **Supplier price comparison** — track cost history per supplier per
+6. **Supplier price comparison** — track cost history per supplier per
    product to spot when a vendor's price creeps up.
+7. **Password reset / rate limiting** — there's no "forgot password" flow
+   (an admin resets it by deleting and recreating the account for now) and
+   no login-attempt throttling; worth adding once this is reachable from
+   outside a trusted network.
 8. **Real batch-level receiving on POs** — `receivePurchaseOrder` currently
    defaults new batches to a 2-year placeholder expiry; add expiry/batch
    number entry to the "Mark Received" flow once real supplier paperwork is

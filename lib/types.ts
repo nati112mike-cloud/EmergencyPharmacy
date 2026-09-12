@@ -29,3 +29,6 @@ export const DEFAULT_CATEGORY_NAMES = [
 export type PaymentStatus = "UNPAID" | "PAID";
 export type BillType = "RENT" | "SALARY" | "OTHER";
 export type RecurrenceInterval = "WEEKLY" | "MONTHLY" | "YEARLY";
+
+// ADMIN can manage staff accounts (see /users); STAFF can use the rest of the app.
+export type UserRole = "ADMIN" | "STAFF";
