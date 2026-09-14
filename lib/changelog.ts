@@ -1,7 +1,7 @@
 // Bump APP_VERSION and add an entry here whenever a user-visible change
 // ships — shown via the "What's New" panel in the NavBar user menu so staff
 // can see what changed without asking.
-export const APP_VERSION = "1.1.0";
+export const APP_VERSION = "1.2.0";
 
 export type ChangelogEntry = {
   version: string;
@@ -10,6 +10,17 @@ export type ChangelogEntry = {
 };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "1.2.0",
+    date: "2026-09-14",
+    notes: [
+      "Barcode scanning at POS — works with hardware scanners and, where supported, the camera.",
+      "Returns: refund part or all of a sale line from Daily Reports; stock goes back to its batch.",
+      "Expiring stock now shows a suggested markdown, and expired batches can be written off.",
+      "Audit log of admin actions (Users page) — who added/removed what, and when.",
+      "POS now queues a sale locally if the connection drops, and syncs it automatically once back online.",
+    ],
+  },
   {
     version: "1.1.0",
     date: "2026-09-14",
