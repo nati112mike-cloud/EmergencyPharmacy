@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import RequireAdmin from "@/components/RequireAdmin";
 
 type UpcomingPayment = {
   id: string;
@@ -27,6 +28,14 @@ function urgencyBadge(u: UpcomingPayment["urgency"], daysUntilDue: number) {
 }
 
 export default function PaymentsPage() {
+  return (
+    <RequireAdmin>
+      <PaymentsContent />
+    </RequireAdmin>
+  );
+}
+
+function PaymentsContent() {
   const [payments, setPayments] = useState<UpcomingPayment[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +77,9 @@ export default function PaymentsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <a href="/api/payments/export" className="btn-secondary">
+            Export to Excel
+          </a>
           <button className="btn-secondary" onClick={() => setShowUploadInvoice(true)}>
             Upload Invoice
           </button>
@@ -199,7 +211,13 @@ function AddBillModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
   return (
     <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+      <form
+        className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!submitting && title && amount && dueDate) submit();
+        }}
+      >
         <h2 className="mb-4 text-lg font-semibold">Add Bill</h2>
         <div className="space-y-3">
           <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
@@ -228,14 +246,14 @@ function AddBillModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>
+          <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" disabled={submitting || !title || !amount || !dueDate} onClick={submit}>
+          <button type="submit" className="btn" disabled={submitting || !title || !amount || !dueDate}>
             Save Bill
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

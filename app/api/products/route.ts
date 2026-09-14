@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isExpired } from "@/lib/business";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 export async function GET() {
   const products = await prisma.product.findMany({
@@ -21,6 +22,9 @@ export async function GET() {
 // Accepts either categoryId, or categoryName to create/reuse a category —
 // categories are open-ended, so the UI can offer "add new" inline.
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const {
     sku,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import RequireAdmin from "@/components/RequireAdmin";
 
 type DashboardData = {
   todaySalesCount: number;
@@ -39,6 +40,14 @@ function money(n: number) {
 }
 
 export default function DashboardPage() {
+  return (
+    <RequireAdmin>
+      <DashboardContent />
+    </RequireAdmin>
+  );
+}
+
+function DashboardContent() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markBillPaid } from "@/lib/payments";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json().catch(() => ({}));
   const { paidAmount, paidDate } = body;
 

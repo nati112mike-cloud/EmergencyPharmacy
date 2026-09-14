@@ -2,14 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createBill } from "@/lib/payments";
 import { BillType, RecurrenceInterval } from "@/lib/types";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 export async function GET() {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const bills = await prisma.bill.findMany({ orderBy: { dueDate: "asc" } });
   return NextResponse.json(bills);
 }
 
 // body: { type, title, amount, dueDate, notes?, isRecurring?, recurrenceInterval? }
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const { type, title, amount, dueDate, notes, isRecurring, recurrenceInterval } = body;
 

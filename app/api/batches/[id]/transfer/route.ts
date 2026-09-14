@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { transferStock } from "@/lib/business";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 // body: { quantity } — moves quantity to the batch's *other* location
 // (STORE -> DISPLAY, or DISPLAY -> STORE to correct a mistaken transfer).
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const quantity = Number(body?.quantity);
 
@@ -12,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   try {
-    const batch = await transferStock(params.id, quantity);
+    const batch = await transferStock(params.id, quantity, admin.name);
     return NextResponse.json(batch);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Transfer failed";

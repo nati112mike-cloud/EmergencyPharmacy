@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readInvoiceFile } from "@/lib/fileStorage";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 const CONTENT_TYPES: Record<string, string> = {
   pdf: "application/pdf",
@@ -9,6 +10,9 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 export async function GET(_req: NextRequest, { params }: { params: { key: string } }) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   try {
     const buffer = await readInvoiceFile(params.key);
     const ext = params.key.split(".").pop()?.toLowerCase() ?? "";

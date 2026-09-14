@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useCurrentUser } from "@/components/RequireAdmin";
 
 type Supplier = {
   id: string;
@@ -36,6 +37,8 @@ type PurchaseOrder = {
 };
 
 export default function SuppliersPage() {
+  const user = useCurrentUser();
+  const isAdmin = user?.role === "ADMIN";
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [suggestions, setSuggestions] = useState<ReorderSuggestion[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -100,12 +103,20 @@ export default function SuppliersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Suppliers &amp; Purchase Orders</h1>
-          <p className="text-slate-500">Manage vendors and act on reorder suggestions.</p>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {isAdmin ? "Suppliers & Purchase Orders" : "Purchase Orders"}
+          </h1>
+          <p className="text-slate-500">
+            {isAdmin
+              ? "Manage vendors and act on reorder suggestions."
+              : "Post a purchase order and mark it received when the stock arrives."}
+          </p>
         </div>
-        <button className="btn" onClick={() => setShowAddSupplier(true)}>
-          + Add Supplier
-        </button>
+        {isAdmin && (
+          <button className="btn" onClick={() => setShowAddSupplier(true)}>
+            + Add Supplier
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -200,7 +211,7 @@ export default function SuppliersPage() {
                         </li>
                       ))}
                     </ul>
-                    {o.dueDate && (
+                    {isAdmin && o.dueDate && (
                       <div className="mt-2 flex items-center gap-2 border-t border-slate-100 pt-2 text-sm">
                         <span className={`badge ${o.paymentStatus === "PAID" ? "badge-ok" : "badge-warning"}`}>
                           {o.paymentStatus === "PAID" ? "Paid" : "Unpaid"}
@@ -231,38 +242,40 @@ export default function SuppliersPage() {
             )}
           </div>
 
-          <div className="card">
-            <h2 className="mb-3 font-semibold text-slate-900">Suppliers</h2>
-            <table className="data-table w-full">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Contact</th>
-                  <th>Phone</th>
-                  <th>Email</th>
-                  <th>Products</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suppliers.map((s) => (
-                  <tr key={s.id}>
-                    <td className="font-medium">{s.name}</td>
-                    <td>{s.contactName ?? "—"}</td>
-                    <td>{s.phone ?? "—"}</td>
-                    <td>{s.email ?? "—"}</td>
-                    <td>{s._count.products}</td>
-                  </tr>
-                ))}
-                {suppliers.length === 0 && (
+          {isAdmin && (
+            <div className="card">
+              <h2 className="mb-3 font-semibold text-slate-900">Suppliers</h2>
+              <table className="data-table w-full">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="py-4 text-center text-slate-400">
-                      No suppliers yet.
-                    </td>
+                    <th>Name</th>
+                    <th>Contact</th>
+                    <th>Phone</th>
+                    <th>Email</th>
+                    <th>Products</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {suppliers.map((s) => (
+                    <tr key={s.id}>
+                      <td className="font-medium">{s.name}</td>
+                      <td>{s.contactName ?? "—"}</td>
+                      <td>{s.phone ?? "—"}</td>
+                      <td>{s.email ?? "—"}</td>
+                      <td>{s._count.products}</td>
+                    </tr>
+                  ))}
+                  {suppliers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-slate-400">
+                        No suppliers yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 

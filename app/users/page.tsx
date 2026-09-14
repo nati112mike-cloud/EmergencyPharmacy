@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import PasswordInput from "@/components/PasswordInput";
 
 type User = { id: string; username: string; name: string; role: string; createdAt: string };
 
@@ -183,19 +184,11 @@ function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void
         ) : (
           <>
             <div className="space-y-3">
-              <input
-                className="input"
-                type="password"
-                placeholder="New password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-              <input
-                className="input"
-                type="password"
+              <PasswordInput placeholder="New password" value={newPassword} onChange={setNewPassword} />
+              <PasswordInput
                 placeholder="Confirm new password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                onChange={setConfirmPassword}
               />
             </div>
             {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
@@ -246,13 +239,7 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <div className="space-y-3">
           <input className="input" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
           <input className="input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <input
-            className="input"
-            type="password"
-            placeholder="Password (min 6 characters)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <PasswordInput placeholder="Password (min 6 characters)" value={password} onChange={setPassword} />
           <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="STAFF">Staff</option>
             <option value="ADMIN">Admin</option>

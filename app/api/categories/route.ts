@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 export async function GET() {
   const categories = await prisma.category.findMany({
@@ -9,8 +10,12 @@ export async function GET() {
   return NextResponse.json(categories);
 }
 
-// Open-ended: any staff member can add a new category from the UI.
+// Catalog management (like adding products) is admin-only — STAFF is
+// limited to POS and purchase orders.
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const name: string | undefined = body?.name?.trim();
 

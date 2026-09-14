@@ -30,5 +30,27 @@ export type PaymentStatus = "UNPAID" | "PAID";
 export type BillType = "RENT" | "SALARY" | "OTHER";
 export type RecurrenceInterval = "WEEKLY" | "MONTHLY" | "YEARLY";
 
-// ADMIN can manage staff accounts (see /users); STAFF can use the rest of the app.
+// ADMIN can manage staff accounts (see /users) and everything else; STAFF is
+// limited to POS (sales) and purchase orders — see middleware.ts / the
+// requireAdmin checks sprinkled through app/api for the actual enforcement.
 export type UserRole = "ADMIN" | "STAFF";
+
+// Common pharmacy stock units, offered as a dropdown on the product form
+// (with a free-text "Other" escape hatch) so entries stay consistent instead
+// of everyone typing their own spelling of "box"/"boxes"/"Box".
+export const UNIT_OPTIONS = [
+  "unit",
+  "box",
+  "bottle",
+  "strip",
+  "tablet",
+  "capsule",
+  "vial",
+  "ampoule",
+  "pack",
+  "carton",
+  "sachet",
+  "tube",
+  "roll",
+  "piece",
+] as const;

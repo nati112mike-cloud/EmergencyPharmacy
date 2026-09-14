@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPurchaseOrderFromInvoice } from "@/lib/payments";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 // body: { supplierId, dueDate, items: [{description, quantity, unitCost}], notes?, fileKey?, fileName? }
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const { supplierId, dueDate, items, notes, fileKey, fileName } = body;
 
@@ -20,6 +24,7 @@ export async function POST(req: NextRequest) {
       notes,
       invoiceFileName: fileName || undefined,
       invoiceFilePath: fileKey || undefined,
+      createdBy: admin.name,
       items: items.map((i: { description: string; quantity: number; unitCost: number }) => ({
         description: i.description,
         quantity: Number(i.quantity),

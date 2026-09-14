@@ -3,14 +3,22 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import PasswordInput from "@/components/PasswordInput";
 
-const links = [
+// STAFF only gets POS and Purchase Orders (posting a sale / posting a
+// purchase) — everything else is admin-only, both here (hidden nav) and in
+// the underlying API routes (the real enforcement).
+const ADMIN_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/pos", label: "POS" },
   { href: "/inventory", label: "Inventory" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/payments", label: "Payments" },
   { href: "/reports", label: "Reports" },
+];
+const STAFF_LINKS = [
+  { href: "/pos", label: "POS" },
+  { href: "/suppliers", label: "Purchase" },
 ];
 
 type CurrentUser = { id: string; username: string; name: string; role: string };
@@ -31,6 +39,8 @@ export default function NavBar() {
   }, [pathname]);
 
   if (pathname === "/login") return null;
+
+  const links = user?.role === "ADMIN" ? ADMIN_LINKS : STAFF_LINKS;
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -161,26 +171,20 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <div className="space-y-3">
-              <input
-                className="input"
-                type="password"
+              <PasswordInput
                 placeholder="Current password"
                 value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
+                onChange={setCurrentPassword}
               />
-              <input
-                className="input"
-                type="password"
+              <PasswordInput
                 placeholder="New password"
                 value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
+                onChange={setNewPassword}
               />
-              <input
-                className="input"
-                type="password"
+              <PasswordInput
                 placeholder="Confirm new password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                onChange={setConfirmPassword}
               />
             </div>
             {error && <p className="mt-2 text-sm text-red-600">{error}</p>}

@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getLowStockProducts, getExpiringBatches, startOfWeek } from "@/lib/business";
 import { getUpcomingPayments } from "@/lib/payments";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 export async function GET() {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);

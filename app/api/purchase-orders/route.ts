@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentSession } from "@/lib/auth/currentUser";
 
+// Open to any signed-in user (ADMIN and STAFF alike) — creating/viewing
+// purchase orders is one of the two things STAFF is allowed to do.
 export async function GET() {
   const orders = await prisma.purchaseOrder.findMany({
     include: { supplier: true, items: { include: { product: true } } },
@@ -22,12 +25,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const session = await getCurrentSession();
     const po = await prisma.purchaseOrder.create({
       data: {
         supplierId,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
         notes: notes || null,
         status: "ORDERED",
+        createdBy: session?.name,
         items: {
           create: items.map((i: { productId: string; quantity: number; unitCost: number }) => ({
             productId: i.productId,

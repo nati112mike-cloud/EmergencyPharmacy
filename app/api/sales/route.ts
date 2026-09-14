@@ -3,14 +3,27 @@ import { prisma } from "@/lib/prisma";
 import { checkout } from "@/lib/business";
 import { PaymentMethod } from "@/lib/types";
 
+// ?date=YYYY-MM-DD restricts to that calendar day (used by the daily
+// reports view); otherwise the most recent `limit` sales are returned.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const limit = Number(searchParams.get("limit") ?? 20);
+  const dateParam = searchParams.get("date");
+
+  let dateFilter: { gte: Date; lt: Date } | undefined;
+  if (dateParam) {
+    const start = new Date(dateParam);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    dateFilter = { gte: start, lt: end };
+  }
 
   const sales = await prisma.sale.findMany({
+    where: dateFilter ? { saleDate: dateFilter } : undefined,
     include: { items: { include: { product: true } } },
     orderBy: { saleDate: "desc" },
-    take: limit,
+    take: dateFilter ? undefined : limit,
   });
   return NextResponse.json(sales);
 }

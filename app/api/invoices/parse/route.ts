@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveInvoiceFile } from "@/lib/fileStorage";
-import { parseInvoicePdf } from "@/lib/invoiceParse";
+import { parseInvoicePdf, explainExtraction } from "@/lib/invoiceParse";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
@@ -9,6 +10,9 @@ const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 // for PDFs. Nothing is written to the product/inventory tables here — that
 // only happens when the reviewed items are POSTed to /api/invoices/confirm.
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -49,6 +53,7 @@ export async function POST(req: NextRequest) {
       fileName: file.name,
       isPdf: true,
       ...extraction,
+      note: explainExtraction(extraction),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to process invoice";

@@ -27,7 +27,9 @@ const SKIP_LINE_PATTERNS = [
   /\bdate\b/i,
   /address/i,
   /phone/i,
+  /\bfax\b/i,
   /email/i,
+  /website/i,
   /terms/i,
   /thank you/i,
   /bill\s*to/i,
@@ -35,9 +37,23 @@ const SKIP_LINE_PATTERNS = [
   /\bpo\s*#/i,
   /^description/i,
   /^quantity/i,
+  /^qty\b/i,
   /unit\s*price/i,
+  /line\s*total/i,
   /^amount/i,
+  /^item\s*(code|no|#)/i,
+  /^sku\b/i,
+  /signature/i,
+  /^notes?:/i,
+  /due\s*date/i,
+  /payment\s*terms/i,
 ];
+
+// Strips currency symbols/codes so "$12.50", "ETB 12.50" and "Br. 12.50" all
+// parse the same as a bare "12.50" — invoices from different suppliers mix
+// these inconsistently, and leaving them in front of a number silently
+// dropped that number from the trailing-numbers match below.
+const CURRENCY_PATTERN = /(?:\$|USD|ETB|Br\.?|birr)\s*/gi;
 
 const NUMBER_PATTERN = /-?\d[\d,]*\.?\d*/g;
 
@@ -60,8 +76,9 @@ export function extractLineItemsFromText(text: string): ExtractedLineItem[] {
 
   const items: ExtractedLineItem[] = [];
 
-  for (const line of lines) {
-    if (SKIP_LINE_PATTERNS.some((re) => re.test(line))) continue;
+  for (const rawLine of lines) {
+    if (SKIP_LINE_PATTERNS.some((re) => re.test(rawLine))) continue;
+    const line = rawLine.replace(CURRENCY_PATTERN, "");
 
     const matches = Array.from(line.matchAll(NUMBER_PATTERN));
     if (matches.length < 2) continue;
@@ -116,4 +133,17 @@ export async function parseInvoicePdf(buffer: Buffer): Promise<InvoiceExtraction
     detectedSupplierId: detected?.id ?? null,
     detectedSupplierName: detected?.name ?? null,
   };
+}
+
+/**
+ * A short explanation for why detection came back empty or thin, shown to
+ * the user in the review step — replaces a silently empty table (which read
+ * as "this feature is broken") with a concrete reason and next step.
+ */
+export function explainExtraction(extraction: InvoiceExtraction): string | undefined {
+  if (extraction.lineItems.length > 0) return undefined;
+  if (!extraction.rawText.trim()) {
+    return "No text could be extracted from this PDF — it's likely a scanned image rather than a real PDF. Enter the line items manually below; the file stays attached for reference.";
+  }
+  return "Couldn't confidently detect line items in this invoice's layout. Enter them manually below — the extracted file stays attached for reference so you can double-check against it.";
 }

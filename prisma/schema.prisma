@@ -73,6 +73,7 @@ model Product {
   saleItems          SaleItem[]
   purchaseOrderItems PurchaseOrderItem[]
   stockMovements     StockMovement[]
+  priceHistory       PriceHistory[]
 
   @@index([categoryId])
 }
@@ -121,6 +122,7 @@ model PurchaseOrder {
   paidAmount       Float?
   invoiceFileName  String? // original uploaded filename, for display
   invoiceFilePath  String? // storage key, see lib/fileStorage.ts
+  createdBy        String? // name of the user who posted this purchase
 
   items PurchaseOrderItem[]
 
@@ -198,10 +200,25 @@ model StockMovement {
   type       String            // StockMovementType
   quantity   Int // positive = stock in, negative = stock out
   note       String?
+  performedBy String? // name of the user who triggered this movement
   createdAt  DateTime          @default(now())
 
   @@index([productId])
   @@index([createdAt])
+}
+
+// One row per price change — lets the product detail history show exactly
+// when and by whom a price was changed, not just the current value.
+model PriceHistory {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  oldPrice  Float
+  newPrice  Float
+  changedBy String?
+  createdAt DateTime @default(now())
+
+  @@index([productId])
 }
 
 model WeeklyReport {
@@ -218,4 +235,20 @@ model WeeklyReport {
   createdAt       DateTime @default(now())
 
   @@unique([weekStart, weekEnd])
+}
+
+// Replaces the weekly cadence for day-to-day use — one row per calendar day.
+model DailyReport {
+  id                  String   @id @default(cuid())
+  reportDate          DateTime @unique // midnight of the day this covers
+  totalRevenue        Float
+  totalCost           Float
+  totalProfit         Float
+  totalSalesCount     Int
+  totalPurchaseCount  Int      @default(0)
+  totalPurchaseCost   Float    @default(0)
+  topSellersJson      String
+  lowStockJson        String
+  expiringJson        String
+  createdAt           DateTime @default(now())
 }

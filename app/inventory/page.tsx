@@ -1,6 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useState, useCallback } from "react";
+import RequireAdmin from "@/components/RequireAdmin";
+import { UNIT_OPTIONS } from "@/lib/types";
 
 type Batch = {
   id: string;
@@ -23,6 +25,7 @@ type Product = {
   price: number;
   reorderPoint: number;
   reorderQty: number;
+  defaultSupplierId: string | null;
   stock: number;
   storeStock: number;
   displayStock: number;
@@ -41,17 +44,51 @@ function stockBadge(stock: number, reorderPoint: number) {
   return <span className="badge badge-ok">{stock} in stock</span>;
 }
 
+// Small box glyph so store/display are told apart at a glance, not just by
+// badge color — plus a native title tooltip explaining what each means.
+function LocationBadge({ location }: { location: "STORE" | "DISPLAY" }) {
+  const isDisplay = location === "DISPLAY";
+  return (
+    <span
+      className={`badge inline-flex items-center gap-1 ${isDisplay ? "badge-ok" : "text-slate-500"}`}
+      title={
+        isDisplay
+          ? "Display: on the shelf — this is what POS sells from."
+          : "Store: back-room stock — not sellable until transferred to Display."
+      }
+    >
+      <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <path d="M2.5 6.5 10 3l7.5 3.5v7L10 17l-7.5-3.5v-7Z" strokeLinejoin="round" />
+        <path d="M2.5 6.5 10 10l7.5-3.5M10 10v7" strokeLinejoin="round" />
+      </svg>
+      {location}
+    </span>
+  );
+}
+
 export default function InventoryPage() {
+  return (
+    <RequireAdmin>
+      <InventoryContent />
+    </RequireAdmin>
+  );
+}
+
+function InventoryContent() {
   const [products, setProducts] = useState<Product[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [batchFormFor, setBatchFormFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
+  const [unitFilter, setUnitFilter] = useState("");
   const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -71,13 +108,22 @@ export default function InventoryPage() {
     load();
   }, [load]);
 
+  const unitsInUse = Array.from(new Set(products.map((p) => p.unit))).sort();
+
   const filtered = products.filter((p) => {
     const matchesQuery =
       p.name.toLowerCase().includes(query.toLowerCase()) ||
       p.sku.toLowerCase().includes(query.toLowerCase()) ||
       (p.category?.name ?? "").toLowerCase().includes(query.toLowerCase());
     const matchesCategory = !categoryFilter || p.categoryId === categoryFilter;
-    return matchesQuery && matchesCategory;
+    const matchesUnit = !unitFilter || p.unit === unitFilter;
+    const matchesLocation =
+      !locationFilter ||
+      (locationFilter === "STORE" && p.storeStock > 0) ||
+      (locationFilter === "DISPLAY" && p.displayStock > 0) ||
+      (locationFilter === "LOW" && p.stock > 0 && p.stock <= p.reorderPoint) ||
+      (locationFilter === "OUT" && p.stock <= 0);
+    return matchesQuery && matchesCategory && matchesUnit && matchesLocation;
   });
 
   async function transfer(batchId: string, quantity: number) {
@@ -96,14 +142,28 @@ export default function InventoryPage() {
     load();
   }
 
+  async function deleteProduct(p: Product) {
+    if (!confirm(`Delete ${p.name}? This can't be undone.`)) return;
+    const res = await fetch(`/api/products/${p.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Failed to delete product");
+      return;
+    }
+    load();
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
           <p className="text-slate-500">Store vs. display stock, expiry tracking, and reorder points.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <a href="/api/inventory/export" className="btn-secondary">
+            Export to Excel
+          </a>
           <button className="btn-secondary" onClick={() => setShowImport(true)}>
             Import from Excel
           </button>
@@ -132,6 +192,25 @@ export default function InventoryPage() {
             </option>
           ))}
         </select>
+        <select
+          className="input max-w-xs"
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+        >
+          <option value="">All stock levels</option>
+          <option value="STORE">Has store stock</option>
+          <option value="DISPLAY">Has display stock</option>
+          <option value="LOW">Low stock</option>
+          <option value="OUT">Out of stock</option>
+        </select>
+        <select className="input max-w-xs" value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
+          <option value="">All units</option>
+          {unitsInUse.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading ? (
@@ -144,9 +223,11 @@ export default function InventoryPage() {
                 <th>SKU</th>
                 <th>Name</th>
                 <th>Category</th>
+                <th>Unit</th>
                 <th>Price</th>
                 <th>Store</th>
                 <th>Display</th>
+                <th>Total</th>
                 <th>Soonest Expiry</th>
                 <th></th>
               </tr>
@@ -163,6 +244,7 @@ export default function InventoryPage() {
                       <td className="font-mono text-xs">{p.sku}</td>
                       <td className="font-medium">{p.name}</td>
                       <td>{p.category?.name ?? <span className="text-slate-400">Uncategorized</span>}</td>
+                      <td className="text-slate-500">{p.unit}</td>
                       <td>${p.price.toFixed(2)}</td>
                       <td>{p.storeStock}</td>
                       <td>
@@ -171,6 +253,7 @@ export default function InventoryPage() {
                           <span className="badge badge-warning ml-2">Restock shelf</span>
                         )}
                       </td>
+                      <td className="font-medium">{stockBadge(p.stock, p.reorderPoint)}</td>
                       <td>
                         {soonest ? (
                           <span
@@ -188,7 +271,7 @@ export default function InventoryPage() {
                           "—"
                         )}
                       </td>
-                      <td className="space-x-2 text-right">
+                      <td className="space-x-2 whitespace-nowrap text-right">
                         <button
                           className="text-sm font-medium text-brand-600"
                           onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
@@ -201,11 +284,26 @@ export default function InventoryPage() {
                         >
                           Receive stock
                         </button>
+                        <button
+                          className="text-sm font-medium text-brand-600"
+                          onClick={() => setHistoryProduct(p)}
+                        >
+                          History
+                        </button>
+                        <button
+                          className="text-sm font-medium text-brand-600"
+                          onClick={() => setEditProduct(p)}
+                        >
+                          Edit
+                        </button>
+                        <button className="text-sm text-red-600" onClick={() => deleteProduct(p)}>
+                          Delete
+                        </button>
                       </td>
                     </tr>
                     {expandedId === p.id && (
                       <tr>
-                        <td colSpan={8} className="bg-slate-50">
+                        <td colSpan={10} className="bg-slate-50">
                           <div className="p-3">
                             <table className="w-full text-sm">
                               <thead>
@@ -223,11 +321,7 @@ export default function InventoryPage() {
                                   <tr key={b.id}>
                                     <td className="py-1">{b.batchNumber}</td>
                                     <td className="py-1">
-                                      <span
-                                        className={`badge ${b.location === "DISPLAY" ? "badge-ok" : "text-slate-500"}`}
-                                      >
-                                        {b.location}
-                                      </span>
+                                      <LocationBadge location={b.location} />
                                     </td>
                                     <td className="py-1">{b.quantity}</td>
                                     <td className="py-1">${b.costPrice.toFixed(2)}</td>
@@ -258,9 +352,9 @@ export default function InventoryPage() {
                     )}
                     {batchFormFor === p.id && (
                       <tr>
-                        <td colSpan={8} className="bg-slate-50">
+                        <td colSpan={10} className="bg-slate-50">
                           <ReceiveStockForm
-                            productId={p.id}
+                            product={p}
                             suppliers={suppliers}
                             onDone={() => {
                               setBatchFormFor(null);
@@ -276,7 +370,7 @@ export default function InventoryPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-400">
+                  <td colSpan={10} className="py-6 text-center text-slate-400">
                     No products found.
                   </td>
                 </tr>
@@ -287,15 +381,32 @@ export default function InventoryPage() {
       )}
 
       {showAddProduct && (
-        <AddProductModal
+        <ProductModal
           suppliers={suppliers}
           categories={categories}
           onClose={() => setShowAddProduct(false)}
-          onCreated={() => {
+          onSaved={() => {
             setShowAddProduct(false);
             load();
           }}
         />
+      )}
+
+      {editProduct && (
+        <ProductModal
+          product={editProduct}
+          suppliers={suppliers}
+          categories={categories}
+          onClose={() => setEditProduct(null)}
+          onSaved={() => {
+            setEditProduct(null);
+            load();
+          }}
+        />
+      )}
+
+      {historyProduct && (
+        <HistoryModal product={historyProduct} onClose={() => setHistoryProduct(null)} />
       )}
 
       {showImport && (
@@ -323,7 +434,14 @@ function TransferControl({
 
   if (!open) {
     return (
-      <button className="text-sm font-medium text-brand-600" onClick={() => setOpen(true)}>
+      <button
+        className="text-sm font-medium text-brand-600"
+        title={`Move stock from ${batch.location} to ${target}`}
+        onClick={() => {
+          setQty(String(batch.quantity));
+          setOpen(true);
+        }}
+      >
         → {target}
       </button>
     );
@@ -339,6 +457,14 @@ function TransferControl({
         placeholder="Qty"
         value={qty}
         onChange={(e) => setQty(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && qty) {
+            onTransfer(Number(qty));
+            setQty("");
+            setOpen(false);
+          }
+        }}
+        autoFocus
       />
       <button
         className="text-sm font-medium text-brand-600"
@@ -358,17 +484,20 @@ function TransferControl({
   );
 }
 
+const NEW_BATCH = "__new__";
+
 function ReceiveStockForm({
-  productId,
+  product,
   suppliers,
   onDone,
   onCancel,
 }: {
-  productId: string;
+  product: Product;
   suppliers: Supplier[];
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const [batchChoice, setBatchChoice] = useState(NEW_BATCH);
   const [batchNumber, setBatchNumber] = useState("");
   const [quantity, setQuantity] = useState("");
   const [costPrice, setCostPrice] = useState("");
@@ -378,10 +507,26 @@ function ReceiveStockForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const knownBatches = Array.from(new Map(product.batches.map((b) => [b.batchNumber, b])).values());
+
+  function selectExisting(id: string) {
+    setBatchChoice(id);
+    if (id === NEW_BATCH) {
+      setBatchNumber("");
+      return;
+    }
+    const match = product.batches.find((b) => b.id === id);
+    if (!match) return;
+    setBatchNumber(match.batchNumber);
+    setCostPrice(String(match.costPrice));
+    setExpiryDate(match.expiryDate.slice(0, 10));
+    setLocation(match.location);
+  }
+
   async function submit() {
     setSubmitting(true);
     setError("");
-    const res = await fetch(`/api/products/${productId}/batches`, {
+    const res = await fetch(`/api/products/${product.id}/batches`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -402,13 +547,40 @@ function ReceiveStockForm({
     onDone();
   }
 
+  const canSubmit = !!(batchNumber && quantity && costPrice && expiryDate);
+
   return (
-    <div className="grid grid-cols-2 gap-3 p-3 md:grid-cols-6">
-      <input className="input" placeholder="Batch #" value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} />
-      <input className="input" type="number" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+    <form
+      className="grid grid-cols-2 gap-3 p-3 md:grid-cols-7"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!submitting && canSubmit) submit();
+      }}
+    >
+      {knownBatches.length > 0 && (
+        <select
+          className="input md:col-span-7"
+          value={batchChoice}
+          onChange={(e) => selectExisting(e.target.value)}
+        >
+          <option value={NEW_BATCH}>+ New batch number…</option>
+          {knownBatches.map((b) => (
+            <option key={b.id} value={b.id}>
+              Use existing: {b.batchNumber} — exp {new Date(b.expiryDate).toLocaleDateString()} ({b.location})
+            </option>
+          ))}
+        </select>
+      )}
+      <input
+        className="input"
+        placeholder="Batch #"
+        value={batchNumber}
+        onChange={(e) => setBatchNumber(e.target.value)}
+      />
+      <input className="input" type="number" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} autoFocus />
       <input className="input" type="number" step="0.01" placeholder="Unit cost" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} />
       <input className="input" type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
-      <select className="input" value={location} onChange={(e) => setLocation(e.target.value)}>
+      <select className="input" title="Store: back room, not sellable. Display: on the shelf, sellable at POS." value={location} onChange={(e) => setLocation(e.target.value)}>
         <option value="STORE">Store (back stock)</option>
         <option value="DISPLAY">Display (shelf)</option>
       </select>
@@ -420,60 +592,73 @@ function ReceiveStockForm({
           </option>
         ))}
       </select>
-      <div className="col-span-2 flex gap-2 md:col-span-6">
-        <button className="btn" disabled={submitting} onClick={submit}>
+      <div className="col-span-2 flex gap-2 md:col-span-7">
+        <button type="submit" className="btn" disabled={submitting || !canSubmit}>
           Save Batch
         </button>
-        <button className="btn-secondary" onClick={onCancel}>
+        <button type="button" className="btn-secondary" onClick={onCancel}>
           Cancel
         </button>
         {error && <span className="self-center text-sm text-red-600">{error}</span>}
       </div>
-    </div>
+    </form>
   );
 }
 
 const NEW_CATEGORY = "__new__";
+const OTHER_UNIT = "__other__";
 
-function AddProductModal({
+function ProductModal({
+  product,
   suppliers,
   categories,
   onClose,
-  onCreated,
+  onSaved,
 }: {
+  product?: Product;
   suppliers: Supplier[];
   categories: Category[];
   onClose: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
 }) {
-  const [sku, setSku] = useState("");
-  const [name, setName] = useState("");
-  const [categoryChoice, setCategoryChoice] = useState("");
+  const isEdit = !!product;
+  const [sku, setSku] = useState(product?.sku ?? "");
+  const [name, setName] = useState(product?.name ?? "");
+  const [categoryChoice, setCategoryChoice] = useState(product?.categoryId ?? "");
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [price, setPrice] = useState("");
-  const [reorderPoint, setReorderPoint] = useState("10");
-  const [reorderQty, setReorderQty] = useState("20");
-  const [defaultSupplierId, setDefaultSupplierId] = useState("");
+  const [unitChoice, setUnitChoice] = useState<string>(
+    product && !(UNIT_OPTIONS as readonly string[]).includes(product.unit) ? OTHER_UNIT : product?.unit ?? "unit"
+  );
+  const [customUnit, setCustomUnit] = useState(product && unitChoice === OTHER_UNIT ? product.unit : "");
+  const [price, setPrice] = useState(product ? String(product.price) : "");
+  const [reorderPoint, setReorderPoint] = useState(product ? String(product.reorderPoint) : "");
+  const [reorderQty, setReorderQty] = useState(product ? String(product.reorderQty) : "");
+  const [defaultSupplierId, setDefaultSupplierId] = useState(product?.defaultSupplierId ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const canSubmit = !!(sku && name && price && (categoryChoice !== NEW_CATEGORY || newCategoryName.trim()));
 
   async function submit() {
     setSubmitting(true);
     setError("");
-    const res = await fetch("/api/products", {
-      method: "POST",
+    const unit = unitChoice === OTHER_UNIT ? customUnit.trim() || "unit" : unitChoice;
+    const body = {
+      sku,
+      name,
+      ...(categoryChoice === NEW_CATEGORY
+        ? { categoryName: newCategoryName }
+        : { categoryId: categoryChoice || undefined }),
+      unit,
+      price,
+      ...(reorderPoint && { reorderPoint }),
+      ...(reorderQty && { reorderQty }),
+      defaultSupplierId: defaultSupplierId || undefined,
+    };
+    const res = await fetch(isEdit ? `/api/products/${product!.id}` : "/api/products", {
+      method: isEdit ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sku,
-        name,
-        ...(categoryChoice === NEW_CATEGORY
-          ? { categoryName: newCategoryName }
-          : { categoryId: categoryChoice || undefined }),
-        price,
-        reorderPoint,
-        reorderQty,
-        defaultSupplierId: defaultSupplierId || undefined,
-      }),
+      body: JSON.stringify(body),
     });
     setSubmitting(false);
     if (!res.ok) {
@@ -481,15 +666,21 @@ function AddProductModal({
       setError(data.error ?? "Failed to save");
       return;
     }
-    onCreated();
+    onSaved();
   }
 
   return (
     <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Add Product</h2>
+      <form
+        className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!submitting && canSubmit) submit();
+        }}
+      >
+        <h2 className="mb-4 text-lg font-semibold">{isEdit ? "Edit Product" : "Add Product"}</h2>
         <div className="grid grid-cols-2 gap-3">
-          <input className="input" placeholder="SKU" value={sku} onChange={(e) => setSku(e.target.value)} />
+          <input className="input" placeholder="SKU" value={sku} onChange={(e) => setSku(e.target.value)} autoFocus />
           <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <select className="input" value={categoryChoice} onChange={(e) => setCategoryChoice(e.target.value)}>
             <option value="">Category (optional)</option>
@@ -510,9 +701,39 @@ function AddProductModal({
           ) : (
             <div />
           )}
+          <select className="input" value={unitChoice} onChange={(e) => setUnitChoice(e.target.value)}>
+            {UNIT_OPTIONS.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+            <option value={OTHER_UNIT}>Other…</option>
+          </select>
+          {unitChoice === OTHER_UNIT ? (
+            <input
+              className="input"
+              placeholder="Custom unit"
+              value={customUnit}
+              onChange={(e) => setCustomUnit(e.target.value)}
+            />
+          ) : (
+            <div />
+          )}
           <input className="input" type="number" step="0.01" placeholder="Price" value={price} onChange={(e) => setPrice(e.target.value)} />
-          <input className="input" type="number" placeholder="Reorder point" value={reorderPoint} onChange={(e) => setReorderPoint(e.target.value)} />
-          <input className="input" type="number" placeholder="Reorder quantity" value={reorderQty} onChange={(e) => setReorderQty(e.target.value)} />
+          <input
+            className="input"
+            type="number"
+            placeholder="Reorder point"
+            value={reorderPoint}
+            onChange={(e) => setReorderPoint(e.target.value)}
+          />
+          <input
+            className="input"
+            type="number"
+            placeholder="Reorder quantity"
+            value={reorderQty}
+            onChange={(e) => setReorderQty(e.target.value)}
+          />
           <select className="input col-span-2" value={defaultSupplierId} onChange={(e) => setDefaultSupplierId(e.target.value)}>
             <option value="">Default supplier (optional)</option>
             {suppliers.map((s) => (
@@ -524,21 +745,103 @@ function AddProductModal({
         </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>
+          <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button
-            className="btn"
-            disabled={
-              submitting ||
-              !sku ||
-              !name ||
-              !price ||
-              (categoryChoice === NEW_CATEGORY && !newCategoryName.trim())
-            }
-            onClick={submit}
-          >
-            Save Product
+          <button type="submit" className="btn" disabled={submitting || !canSubmit}>
+            {isEdit ? "Save Changes" : "Save Product"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+type HistoryMovement = {
+  id: string;
+  type: string;
+  quantity: number;
+  note: string | null;
+  batchNumber: string | null;
+  performedBy: string | null;
+  createdAt: string;
+};
+type HistoryPrice = { id: string; oldPrice: number; newPrice: number; changedBy: string | null; createdAt: string };
+
+function HistoryModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const [movements, setMovements] = useState<HistoryMovement[] | null>(null);
+  const [priceHistory, setPriceHistory] = useState<HistoryPrice[] | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/products/${product.id}/history`)
+      .then((r) => r.json())
+      .then((d) => {
+        setMovements(d.movements);
+        setPriceHistory(d.priceHistory);
+      });
+  }, [product.id]);
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="mb-1 text-lg font-semibold">History — {product.name}</h2>
+        <p className="mb-4 text-sm text-slate-500">{product.sku}</p>
+
+        <h3 className="mb-2 text-sm font-semibold text-slate-700">Price changes</h3>
+        {!priceHistory ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : priceHistory.length === 0 ? (
+          <p className="mb-4 text-sm text-slate-500">No price changes recorded.</p>
+        ) : (
+          <ul className="mb-4 space-y-1 text-sm">
+            {priceHistory.map((h) => (
+              <li key={h.id} className="flex justify-between border-b border-slate-100 py-1">
+                <span>
+                  ${h.oldPrice.toFixed(2)} → ${h.newPrice.toFixed(2)}
+                  {h.changedBy && <span className="text-slate-400"> · by {h.changedBy}</span>}
+                </span>
+                <span className="text-slate-400">{new Date(h.createdAt).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <h3 className="mb-2 text-sm font-semibold text-slate-700">Stock movements (purchases, sales, transfers)</h3>
+        {!movements ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : movements.length === 0 ? (
+          <p className="text-sm text-slate-500">No stock movements recorded.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs uppercase text-slate-500">
+                <th className="py-1 text-left">When</th>
+                <th className="py-1 text-left">Type</th>
+                <th className="py-1 text-left">Batch</th>
+                <th className="py-1 text-left">Qty</th>
+                <th className="py-1 text-left">By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {movements.map((m) => (
+                <tr key={m.id} className="border-b border-slate-100">
+                  <td className="py-1">{new Date(m.createdAt).toLocaleString()}</td>
+                  <td className="py-1">{m.type.replace(/_/g, " ")}</td>
+                  <td className="py-1">{m.batchNumber ?? "—"}</td>
+                  <td className={`py-1 ${m.quantity < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    {m.quantity > 0 ? "+" : ""}
+                    {m.quantity}
+                  </td>
+                  <td className="py-1">{m.performedBy ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <div className="mt-5 flex justify-end">
+          <button className="btn-secondary" onClick={onClose}>
+            Close
           </button>
         </div>
       </div>

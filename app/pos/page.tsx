@@ -155,13 +155,10 @@ export default function PosPage() {
                   <tr key={l.productId}>
                     <td>{l.name}</td>
                     <td>
-                      <input
-                        type="number"
-                        min={1}
-                        max={l.stock}
-                        className="input w-20"
+                      <QtyStepper
                         value={l.quantity}
-                        onChange={(e) => updateQty(l.productId, Number(e.target.value))}
+                        max={l.stock}
+                        onChange={(qty) => updateQty(l.productId, qty)}
                       />
                     </td>
                     <td>${l.price.toFixed(2)}</td>
@@ -207,6 +204,61 @@ export default function PosPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Touch-friendly qty control: big +/- tap targets (a bare `type=number`
+ * input is fiddly on a phone keyboard) plus a direct-entry field for when
+ * someone wants to type a specific number.
+ */
+function QtyStepper({
+  value,
+  max,
+  onChange,
+}: {
+  value: number;
+  max: number;
+  onChange: (qty: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => setText(String(value)), [value]);
+
+  function commit(next: string) {
+    const n = Math.max(1, Math.min(max, Math.round(Number(next)) || 1));
+    setText(String(n));
+    onChange(n);
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-lg leading-none text-slate-600 active:bg-slate-100"
+        onClick={() => commit(String(value - 1))}
+        disabled={value <= 1}
+      >
+        −
+      </button>
+      <input
+        type="number"
+        min={1}
+        max={max}
+        className="input w-14 px-1 text-center"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+      />
+      <button
+        type="button"
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-lg leading-none text-slate-600 active:bg-slate-100"
+        onClick={() => commit(String(value + 1))}
+        disabled={value >= max}
+      >
+        +
+      </button>
     </div>
   );
 }

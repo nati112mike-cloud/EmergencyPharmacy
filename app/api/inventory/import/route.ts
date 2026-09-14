@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { importInventoryWorkbook } from "@/lib/inventoryImport";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB is generous for a spreadsheet
 
 export async function POST(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   let formData: FormData;
   try {
     formData = await req.formData();

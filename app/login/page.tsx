@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import PasswordInput from "@/components/PasswordInput";
 
 function LoginForm() {
   const router = useRouter();
@@ -10,6 +11,7 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,18 +56,26 @@ function LoginForm() {
             onChange={(e) => setUsername(e.target.value)}
             autoFocus
           />
-          <input
-            className="input"
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <PasswordInput placeholder="Password" value={password} onChange={setPassword} />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button className="btn w-full" type="submit" disabled={submitting || !username || !password}>
             {submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
+
+        <button
+          type="button"
+          className="mt-3 w-full text-center text-sm text-slate-500 hover:text-slate-700"
+          onClick={() => setShowForgot((v) => !v)}
+        >
+          Forgot password?
+        </button>
+        {showForgot && (
+          <p className="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+            Ask your pharmacy admin to reset it for you from the Users page — passwords aren't
+            recoverable automatically since this system doesn't send reset emails.
+          </p>
+        )}
       </div>
     </div>
   );

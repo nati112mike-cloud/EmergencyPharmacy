@@ -155,6 +155,7 @@ export type CreatePOFromInvoiceInput = {
   notes?: string;
   invoiceFileName?: string;
   invoiceFilePath?: string;
+  createdBy?: string;
 };
 
 /**
@@ -199,6 +200,7 @@ export async function createPurchaseOrderFromInvoice(input: CreatePOFromInvoiceI
         notes: input.notes,
         invoiceFileName: input.invoiceFileName,
         invoiceFilePath: input.invoiceFilePath,
+        createdBy: input.createdBy,
         items: { create: orderItems },
       },
       include: { items: { include: { product: true } }, supplier: true },

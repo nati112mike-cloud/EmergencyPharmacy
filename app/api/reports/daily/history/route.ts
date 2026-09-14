@@ -6,19 +6,20 @@ export async function GET() {
   const admin = await requireAdmin();
   if (admin instanceof NextResponse) return admin;
 
-  const reports = await prisma.weeklyReport.findMany({
-    orderBy: { weekStart: "desc" },
-    take: 26,
+  const reports = await prisma.dailyReport.findMany({
+    orderBy: { reportDate: "desc" },
+    take: 60,
   });
   return NextResponse.json(
     reports.map((r) => ({
       id: r.id,
-      weekStart: r.weekStart,
-      weekEnd: r.weekEnd,
+      reportDate: r.reportDate,
       totalRevenue: r.totalRevenue,
       totalCost: r.totalCost,
       totalProfit: r.totalProfit,
       totalSalesCount: r.totalSalesCount,
+      totalPurchaseCount: r.totalPurchaseCount,
+      totalPurchaseCost: r.totalPurchaseCost,
       topSellers: JSON.parse(r.topSellersJson),
       lowStock: JSON.parse(r.lowStockJson),
       expiring: JSON.parse(r.expiringJson),

@@ -216,6 +216,7 @@ export async function checkout(
           type: "SALE",
           quantity: m.quantity,
           note: `Sale ${sale.id}`,
+          performedBy: opts.cashierName,
         },
       });
     }
@@ -225,7 +226,7 @@ export async function checkout(
 }
 
 /** Marks a purchase order as received and creates a stock batch per line item. */
-export async function receivePurchaseOrder(purchaseOrderId: string) {
+export async function receivePurchaseOrder(purchaseOrderId: string, performedBy?: string) {
   return prisma.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.findUnique({
       where: { id: purchaseOrderId },
@@ -257,6 +258,7 @@ export async function receivePurchaseOrder(purchaseOrderId: string) {
           type: "PURCHASE_RECEIPT",
           quantity: item.quantity,
           note: `Received PO ${po.id}`,
+          performedBy: performedBy ?? po.createdBy ?? undefined,
         },
       });
     }
@@ -276,7 +278,7 @@ export async function receivePurchaseOrder(purchaseOrderId: string) {
  * shares the same lot (batch number + expiry + cost) if one exists, or a new
  * batch row otherwise — so the same physical lot never fragments needlessly.
  */
-export async function transferStock(sourceBatchId: string, quantity: number) {
+export async function transferStock(sourceBatchId: string, quantity: number, performedBy?: string) {
   if (quantity <= 0) throw new Error("Transfer quantity must be positive");
 
   return prisma.$transaction(async (tx) => {
@@ -331,6 +333,7 @@ export async function transferStock(sourceBatchId: string, quantity: number) {
           type: movementType,
           quantity: -quantity,
           note: `Transferred to ${destLocation}`,
+          performedBy,
         },
         {
           productId: source.productId,
@@ -338,6 +341,7 @@ export async function transferStock(sourceBatchId: string, quantity: number) {
           type: movementType,
           quantity,
           note: `Transferred from ${source.location}`,
+          performedBy,
         },
       ],
     });
@@ -444,4 +448,137 @@ export function startOfWeek(date: Date): Date {
   d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+export function startOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export type DailyReportData = {
+  reportDate: Date;
+  totalRevenue: number;
+  totalCost: number;
+  totalProfit: number;
+  totalSalesCount: number;
+  totalPurchaseCount: number;
+  totalPurchaseCost: number;
+  topSellers: { productId: string; name: string; quantity: number; revenue: number }[];
+  lowStock: LowStockItem[];
+  expiring: ExpiringBatch[];
+  sales: {
+    id: string;
+    saleDate: Date;
+    totalAmount: number;
+    paymentMethod: string;
+    cashierName: string | null;
+    itemCount: number;
+  }[];
+  purchases: {
+    id: string;
+    supplierName: string;
+    status: string;
+    itemCount: number;
+    totalCost: number;
+    createdBy: string | null;
+  }[];
+};
+
+/** Aggregates sales, purchases, and inventory alerts for a single calendar day. */
+export async function buildDailyReport(day: Date): Promise<DailyReportData> {
+  const start = startOfDay(day);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  const [saleItems, sales, purchaseOrders, lowStock, expiring] = await Promise.all([
+    prisma.saleItem.findMany({
+      where: { sale: { saleDate: { gte: start, lt: end } } },
+      include: { product: true },
+    }),
+    prisma.sale.findMany({
+      where: { saleDate: { gte: start, lt: end } },
+      include: { items: true },
+      orderBy: { saleDate: "desc" },
+    }),
+    prisma.purchaseOrder.findMany({
+      where: { createdAt: { gte: start, lt: end } },
+      include: { supplier: true, items: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    getLowStockProducts(),
+    getExpiringBatches(),
+  ]);
+
+  const totalRevenue = saleItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  const totalCost = saleItems.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+
+  const byProduct = new Map<string, { name: string; quantity: number; revenue: number }>();
+  for (const item of saleItems) {
+    const entry = byProduct.get(item.productId) ?? {
+      name: item.product.name,
+      quantity: 0,
+      revenue: 0,
+    };
+    entry.quantity += item.quantity;
+    entry.revenue += item.quantity * item.unitPrice;
+    byProduct.set(item.productId, entry);
+  }
+  const topSellers = Array.from(byProduct.entries())
+    .map(([productId, v]) => ({ productId, ...v }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 10);
+
+  const totalPurchaseCost = purchaseOrders.reduce(
+    (sum, po) => sum + po.items.reduce((s, i) => s + i.quantity * i.unitCost, 0),
+    0
+  );
+
+  return {
+    reportDate: start,
+    totalRevenue,
+    totalCost,
+    totalProfit: totalRevenue - totalCost,
+    totalSalesCount: sales.length,
+    totalPurchaseCount: purchaseOrders.length,
+    totalPurchaseCost,
+    topSellers,
+    lowStock,
+    expiring,
+    sales: sales.map((s) => ({
+      id: s.id,
+      saleDate: s.saleDate,
+      totalAmount: s.totalAmount,
+      paymentMethod: s.paymentMethod,
+      cashierName: s.cashierName,
+      itemCount: s.items.reduce((sum, i) => sum + i.quantity, 0),
+    })),
+    purchases: purchaseOrders.map((po) => ({
+      id: po.id,
+      supplierName: po.supplier.name,
+      status: po.status,
+      itemCount: po.items.reduce((sum, i) => sum + i.quantity, 0),
+      totalCost: po.items.reduce((sum, i) => sum + i.quantity * i.unitCost, 0),
+      createdBy: po.createdBy,
+    })),
+  };
+}
+
+export async function saveDailyReport(report: DailyReportData) {
+  const data = {
+    totalRevenue: report.totalRevenue,
+    totalCost: report.totalCost,
+    totalProfit: report.totalProfit,
+    totalSalesCount: report.totalSalesCount,
+    totalPurchaseCount: report.totalPurchaseCount,
+    totalPurchaseCost: report.totalPurchaseCost,
+    topSellersJson: JSON.stringify(report.topSellers),
+    lowStockJson: JSON.stringify(report.lowStock),
+    expiringJson: JSON.stringify(report.expiring),
+  };
+  return prisma.dailyReport.upsert({
+    where: { reportDate: report.reportDate },
+    create: { reportDate: report.reportDate, ...data },
+    update: data,
+  });
 }

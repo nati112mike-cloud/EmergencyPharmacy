@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 // Manually record a stock receipt (batch) for a product — used for direct
-// deliveries that don't go through a formal purchase order.
+// deliveries that don't go through a formal purchase order. If the exact
+// same lot (batch number + location + expiry + cost) already exists, its
+// quantity is topped up instead of creating a duplicate batch row — so
+// receiving the same lot twice doesn't fragment the batch list.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const admin = await requireAdmin();
+  if (admin instanceof NextResponse) return admin;
+
   const body = await req.json();
   const { batchNumber, quantity, costPrice, expiryDate, supplierId, location } = body;
 
@@ -19,24 +26,40 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const batch = await tx.batch.create({
-        data: {
+      const existing = await tx.batch.findFirst({
+        where: {
           productId: params.id,
           batchNumber,
-          quantity: Number(quantity),
-          costPrice: Number(costPrice),
-          expiryDate: new Date(expiryDate),
-          supplierId: supplierId || null,
           location: location || "STORE",
+          expiryDate: new Date(expiryDate),
+          costPrice: Number(costPrice),
         },
       });
+
+      const batch = existing
+        ? await tx.batch.update({
+            where: { id: existing.id },
+            data: { quantity: { increment: Number(quantity) } },
+          })
+        : await tx.batch.create({
+            data: {
+              productId: params.id,
+              batchNumber,
+              quantity: Number(quantity),
+              costPrice: Number(costPrice),
+              expiryDate: new Date(expiryDate),
+              supplierId: supplierId || null,
+              location: location || "STORE",
+            },
+          });
       await tx.stockMovement.create({
         data: {
           productId: params.id,
           batchId: batch.id,
           type: "PURCHASE_RECEIPT",
           quantity: Number(quantity),
-          note: "Manual stock receipt",
+          note: existing ? "Manual stock receipt (added to existing batch)" : "Manual stock receipt",
+          performedBy: admin.name,
         },
       });
       return batch;
