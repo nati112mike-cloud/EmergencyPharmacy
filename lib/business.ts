@@ -92,7 +92,22 @@ export type ExpiringBatch = {
   expiryDate: Date;
   daysUntilExpiry: number;
   status: "expired" | "expiring_soon";
+  suggestedDiscountPercent: number; // 0 for already-expired batches — write off, don't discount
 };
+
+/**
+ * A rough markdown ladder so stock actually sells before it expires instead
+ * of becoming a write-off — steeper the closer to the expiry date. Advisory
+ * only: nothing applies this automatically, it's just a number shown next to
+ * the batch so an admin can decide to reprice.
+ */
+export function suggestedDiscountPercent(daysUntilExpiry: number): number {
+  if (daysUntilExpiry < 0) return 0; // already expired — write off, not discount
+  if (daysUntilExpiry <= 30) return 50;
+  if (daysUntilExpiry <= 60) return 25;
+  if (daysUntilExpiry <= 90) return 10;
+  return 0;
+}
 
 /** Batches already expired or expiring within EXPIRY_WARNING_DAYS, soonest first. */
 export async function getExpiringBatches(): Promise<ExpiringBatch[]> {
@@ -104,18 +119,54 @@ export async function getExpiringBatches(): Promise<ExpiringBatch[]> {
 
   return batches
     .filter((b) => isExpired(b.expiryDate) || isExpiringSoon(b.expiryDate))
-    .map((b) => ({
-      batchId: b.id,
-      productId: b.productId,
-      productName: b.product.name,
-      sku: b.product.sku,
-      batchNumber: b.batchNumber,
-      quantity: b.quantity,
-      location: b.location as BatchLocation,
-      expiryDate: b.expiryDate,
-      daysUntilExpiry: daysUntil(b.expiryDate),
-      status: isExpired(b.expiryDate) ? "expired" : "expiring_soon",
-    }));
+    .map((b) => {
+      const daysLeft = daysUntil(b.expiryDate);
+      return {
+        batchId: b.id,
+        productId: b.productId,
+        productName: b.product.name,
+        sku: b.product.sku,
+        batchNumber: b.batchNumber,
+        quantity: b.quantity,
+        location: b.location as BatchLocation,
+        expiryDate: b.expiryDate,
+        daysUntilExpiry: daysLeft,
+        status: isExpired(b.expiryDate) ? "expired" : "expiring_soon",
+        suggestedDiscountPercent: suggestedDiscountPercent(daysLeft),
+      };
+    });
+}
+
+/**
+ * Zeroes out an expired batch and logs a WRITE_OFF_EXPIRED movement — the
+ * stock is gone (spoiled/destroyed), not sellable, so this doesn't move
+ * quantity anywhere the way a transfer or return does.
+ */
+export async function writeOffBatch(batchId: string, performedBy?: string) {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findUnique({ where: { id: batchId } });
+    if (!batch) throw new Error("Batch not found");
+    if (batch.quantity <= 0) throw new Error("Batch has no remaining quantity to write off");
+
+    const written = batch.quantity;
+    const updated = await tx.batch.update({
+      where: { id: batchId },
+      data: { quantity: 0 },
+    });
+
+    await tx.stockMovement.create({
+      data: {
+        productId: batch.productId,
+        batchId: batch.id,
+        type: "WRITE_OFF_EXPIRED",
+        quantity: -written,
+        note: `Wrote off ${written} unit(s), batch ${batch.batchNumber}`,
+        performedBy,
+      },
+    });
+
+    return updated;
+  });
 }
 
 export type CartLine = { productId: string; quantity: number };
@@ -222,6 +273,76 @@ export async function checkout(
     }
 
     return { saleId: sale.id, totalAmount };
+  });
+}
+
+export type ReturnResult = {
+  saleReturnId: string;
+  refundAmount: number;
+  remainingReturnable: number;
+};
+
+/**
+ * Refunds (part of) one sale line. Stock goes back to the batch it was sold
+ * from if that batch still exists — otherwise it's just a paper refund with
+ * no stock adjustment (the lot is gone, e.g. long since re-transferred or
+ * the DB row was somehow removed). Multiple partial returns against the same
+ * line are allowed as long as the total doesn't exceed what was sold.
+ */
+export async function processReturn(
+  saleItemId: string,
+  quantity: number,
+  opts: { reason?: string; performedBy?: string } = {}
+): Promise<ReturnResult> {
+  if (quantity <= 0) throw new Error("Return quantity must be positive");
+
+  return prisma.$transaction(async (tx) => {
+    const saleItem = await tx.saleItem.findUnique({ where: { id: saleItemId } });
+    if (!saleItem) throw new Error("Sale line not found");
+
+    const returnable = saleItem.quantity - saleItem.returnedQuantity;
+    if (quantity > returnable) {
+      throw new Error(`Only ${returnable} unit(s) left returnable on this line`);
+    }
+
+    if (saleItem.batchId) {
+      const batch = await tx.batch.findUnique({ where: { id: saleItem.batchId } });
+      if (batch) {
+        await tx.batch.update({ where: { id: batch.id }, data: { quantity: { increment: quantity } } });
+        await tx.stockMovement.create({
+          data: {
+            productId: saleItem.productId,
+            batchId: batch.id,
+            type: "RETURN",
+            quantity,
+            note: `Return against sale item ${saleItem.id}`,
+            performedBy: opts.performedBy,
+          },
+        });
+      }
+    }
+
+    await tx.saleItem.update({
+      where: { id: saleItemId },
+      data: { returnedQuantity: { increment: quantity } },
+    });
+
+    const refundAmount = quantity * saleItem.unitPrice;
+    const saleReturn = await tx.saleReturn.create({
+      data: {
+        saleItemId,
+        quantity,
+        refundAmount,
+        reason: opts.reason,
+        processedBy: opts.performedBy,
+      },
+    });
+
+    return {
+      saleReturnId: saleReturn.id,
+      refundAmount,
+      remainingReturnable: returnable - quantity,
+    };
   });
 }
 

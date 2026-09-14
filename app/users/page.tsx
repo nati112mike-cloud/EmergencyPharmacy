@@ -121,6 +121,8 @@ export default function UsersPage() {
         {testResult && <p className="mt-2 text-sm text-slate-600">{testResult}</p>}
       </div>
 
+      <AuditLogCard />
+
       {showAdd && (
         <AddUserModal
           onClose={() => setShowAdd(false)}
@@ -255,6 +257,53 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+type AuditEntry = { id: string; actorName: string | null; action: string; summary: string; createdAt: string };
+
+function AuditLogCard() {
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open || entries) return;
+    fetch("/api/audit-log")
+      .then((r) => r.json())
+      .then(setEntries);
+  }, [open, entries]);
+
+  return (
+    <div className="card">
+      <button
+        className="flex w-full items-center justify-between text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 className="font-semibold text-slate-900">Audit Log</h2>
+        <span className="text-sm text-brand-600">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="mt-3">
+          {!entries ? (
+            <p className="text-sm text-slate-500">Loading…</p>
+          ) : entries.length === 0 ? (
+            <p className="text-sm text-slate-500">Nothing logged yet.</p>
+          ) : (
+            <ul className="max-h-96 space-y-1 overflow-y-auto text-sm">
+              {entries.map((e) => (
+                <li key={e.id} className="flex justify-between gap-3 border-b border-slate-100 py-1.5">
+                  <span>
+                    {e.summary}
+                    {e.actorName && <span className="text-slate-400"> · by {e.actorName}</span>}
+                  </span>
+                  <span className="shrink-0 text-slate-400">{new Date(e.createdAt).toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

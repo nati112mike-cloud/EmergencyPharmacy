@@ -13,6 +13,7 @@ function daysFromNow(days: number): Date {
 async function main() {
   console.log("Seeding pharmacy sample data…");
 
+  await prisma.saleReturn.deleteMany();
   await prisma.saleItem.deleteMany();
   await prisma.sale.deleteMany();
   await prisma.stockMovement.deleteMany();
@@ -20,10 +21,13 @@ async function main() {
   await prisma.purchaseOrder.deleteMany();
   await prisma.bill.deleteMany();
   await prisma.batch.deleteMany();
+  await prisma.priceHistory.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.weeklyReport.deleteMany();
+  await prisma.dailyReport.deleteMany();
+  await prisma.auditLog.deleteMany();
   await prisma.user.deleteMany();
 
   await prisma.user.create({

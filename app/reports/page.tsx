@@ -59,6 +59,7 @@ function ReportsContent() {
   const [date, setDate] = useState(isoDate(new Date()));
   const [report, setReport] = useState<DailyReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refundSaleId, setRefundSaleId] = useState<string | null>(null);
 
   async function generate(d: string) {
     setLoading(true);
@@ -156,6 +157,7 @@ function ReportsContent() {
                       <th>Method</th>
                       <th>Cashier</th>
                       <th>Total</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -166,6 +168,14 @@ function ReportsContent() {
                         <td>{s.paymentMethod}</td>
                         <td>{s.cashierName ?? "—"}</td>
                         <td>{money(s.totalAmount)}</td>
+                        <td className="text-right">
+                          <button
+                            className="text-sm font-medium text-brand-600"
+                            onClick={() => setRefundSaleId(s.id)}
+                          >
+                            Refund
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -263,6 +273,133 @@ function ReportsContent() {
           </div>
         </div>
       )}
+
+      {refundSaleId && (
+        <RefundModal
+          saleId={refundSaleId}
+          onClose={() => setRefundSaleId(null)}
+          onDone={() => {
+            setRefundSaleId(null);
+            generate(date);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+type SaleDetail = {
+  id: string;
+  saleDate: string;
+  totalAmount: number;
+  items: { id: string; productName: string; quantity: number; unitPrice: number; returnedQuantity: number }[];
+};
+
+function RefundModal({
+  saleId,
+  onClose,
+  onDone,
+}: {
+  saleId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [sale, setSale] = useState<SaleDetail | null>(null);
+  const [itemId, setItemId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/sales/${saleId}`)
+      .then((r) => r.json())
+      .then(setSale);
+  }, [saleId]);
+
+  const selected = sale?.items.find((i) => i.id === itemId);
+  const returnable = selected ? selected.quantity - selected.returnedQuantity : 0;
+
+  async function submit() {
+    if (!itemId) return;
+    setSubmitting(true);
+    setError("");
+    const res = await fetch(`/api/sale-items/${itemId}/return`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quantity: Number(quantity), reason: reason || undefined }),
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to process return");
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="mb-4 text-lg font-semibold">Refund a line item</h2>
+        {!sale ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : (
+          <div className="space-y-3">
+            <select className="input" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+              <option value="">Select item…</option>
+              {sale.items.map((i) => {
+                const left = i.quantity - i.returnedQuantity;
+                return (
+                  <option key={i.id} value={i.id} disabled={left <= 0}>
+                    {i.productName} — {i.quantity} sold
+                    {i.returnedQuantity > 0 ? `, ${i.returnedQuantity} already returned` : ""}
+                    {left <= 0 ? " (fully returned)" : ""}
+                  </option>
+                );
+              })}
+            </select>
+            {selected && (
+              <>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={returnable}
+                  placeholder={`Quantity (up to ${returnable})`}
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="Reason (optional)"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+                <p className="text-sm text-slate-500">
+                  Refund amount: ${(Number(quantity || 0) * selected.unitPrice).toFixed(2)}. Stock is
+                  restored to its original batch if that batch still exists.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn"
+            disabled={
+              submitting || !itemId || !quantity || Number(quantity) <= 0 || Number(quantity) > returnable
+            }
+            onClick={submit}
+          >
+            {submitting ? "Processing…" : "Process Refund"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

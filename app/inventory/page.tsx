@@ -18,6 +18,7 @@ type Category = { id: string; name: string };
 type Product = {
   id: string;
   sku: string;
+  barcode: string | null;
   name: string;
   categoryId: string | null;
   category: Category | null;
@@ -36,6 +37,17 @@ type Supplier = { id: string; name: string };
 
 function daysUntil(dateStr: string) {
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
+// Mirrors lib/business.ts's suggestedDiscountPercent — kept as a small local
+// copy since that file also imports prisma and can't be pulled into a
+// client component.
+function suggestedDiscount(days: number) {
+  if (days < 0) return 0;
+  if (days <= 30) return 50;
+  if (days <= 60) return 25;
+  if (days <= 90) return 10;
+  return 0;
 }
 
 function stockBadge(stock: number, reorderPoint: number) {
@@ -137,6 +149,17 @@ function InventoryContent() {
     if (!res.ok) {
       const data = await res.json();
       alert(data.error ?? "Transfer failed");
+      return;
+    }
+    load();
+  }
+
+  async function writeOff(batchId: string) {
+    if (!confirm("Write off this expired batch? This zeroes its quantity and can't be undone.")) return;
+    const res = await fetch(`/api/batches/${batchId}/write-off`, { method: "POST" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Failed to write off batch");
       return;
     }
     load();
@@ -317,26 +340,52 @@ function InventoryContent() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {p.batches.map((b) => (
-                                  <tr key={b.id}>
-                                    <td className="py-1">{b.batchNumber}</td>
-                                    <td className="py-1">
-                                      <LocationBadge location={b.location} />
-                                    </td>
-                                    <td className="py-1">{b.quantity}</td>
-                                    <td className="py-1">${b.costPrice.toFixed(2)}</td>
-                                    <td className="py-1">{new Date(b.expiryDate).toLocaleDateString()}</td>
-                                    <td className="py-1 text-right">
-                                      {b.quantity > 0 && (
-                                        <TransferControl
-                                          batch={b}
-                                          busy={transferBusyId === b.id}
-                                          onTransfer={(qty) => transfer(b.id, qty)}
-                                        />
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {p.batches.map((b) => {
+                                  const days = daysUntil(b.expiryDate);
+                                  const discount = suggestedDiscount(days);
+                                  return (
+                                    <tr key={b.id}>
+                                      <td className="py-1">{b.batchNumber}</td>
+                                      <td className="py-1">
+                                        <LocationBadge location={b.location} />
+                                      </td>
+                                      <td className="py-1">{b.quantity}</td>
+                                      <td className="py-1">${b.costPrice.toFixed(2)}</td>
+                                      <td className="py-1">
+                                        {new Date(b.expiryDate).toLocaleDateString()}
+                                        {days < 0 && b.quantity > 0 && (
+                                          <span className="badge badge-danger ml-2">Expired</span>
+                                        )}
+                                        {discount > 0 && (
+                                          <span
+                                            className="badge badge-warning ml-2"
+                                            title="Suggested markdown to sell through before it expires — nothing applies this automatically."
+                                          >
+                                            Suggest -{discount}%
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-1 text-right">
+                                        {b.quantity > 0 && days < 0 ? (
+                                          <button
+                                            className="text-sm font-medium text-red-600"
+                                            onClick={() => writeOff(b.id)}
+                                          >
+                                            Write off
+                                          </button>
+                                        ) : (
+                                          b.quantity > 0 && (
+                                            <TransferControl
+                                              batch={b}
+                                              busy={transferBusyId === b.id}
+                                              onTransfer={(qty) => transfer(b.id, qty)}
+                                            />
+                                          )
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                                 {p.batches.length === 0 && (
                                   <tr>
                                     <td colSpan={6} className="py-2 text-slate-400">
@@ -623,6 +672,7 @@ function ProductModal({
 }) {
   const isEdit = !!product;
   const [sku, setSku] = useState(product?.sku ?? "");
+  const [barcode, setBarcode] = useState(product?.barcode ?? "");
   const [name, setName] = useState(product?.name ?? "");
   const [categoryChoice, setCategoryChoice] = useState(product?.categoryId ?? "");
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -645,6 +695,7 @@ function ProductModal({
     const unit = unitChoice === OTHER_UNIT ? customUnit.trim() || "unit" : unitChoice;
     const body = {
       sku,
+      barcode: barcode || undefined,
       name,
       ...(categoryChoice === NEW_CATEGORY
         ? { categoryName: newCategoryName }
@@ -681,7 +732,13 @@ function ProductModal({
         <h2 className="mb-4 text-lg font-semibold">{isEdit ? "Edit Product" : "Add Product"}</h2>
         <div className="grid grid-cols-2 gap-3">
           <input className="input" placeholder="SKU" value={sku} onChange={(e) => setSku(e.target.value)} autoFocus />
-          <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input
+            className="input"
+            placeholder="Barcode (optional, for scanning)"
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+          />
+          <input className="input col-span-2" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <select className="input" value={categoryChoice} onChange={(e) => setCategoryChoice(e.target.value)}>
             <option value="">Category (optional)</option>
             {categories.map((c) => (

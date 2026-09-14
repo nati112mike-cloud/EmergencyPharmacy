@@ -55,6 +55,7 @@ model Category {
 model Product {
   id                String   @id @default(cuid())
   sku               String   @unique
+  barcode           String?  @unique // UPC/EAN from a hardware scanner or camera scan; optional
   name              String
   categoryId        String?
   category          Category? @relation(fields: [categoryId], references: [id])
@@ -176,19 +177,51 @@ model Sale {
 }
 
 model SaleItem {
-  id         String  @id @default(cuid())
-  saleId     String
-  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId  String
-  product    Product @relation(fields: [productId], references: [id])
-  batchId    String?
-  batch      Batch?  @relation(fields: [batchId], references: [id])
-  quantity   Int
-  unitPrice  Float // price charged at time of sale
-  unitCost   Float // cost at time of sale (for margin reporting)
+  id                String  @id @default(cuid())
+  saleId            String
+  sale              Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product @relation(fields: [productId], references: [id])
+  batchId           String?
+  batch             Batch?  @relation(fields: [batchId], references: [id])
+  quantity          Int
+  unitPrice         Float // price charged at time of sale
+  unitCost          Float // cost at time of sale (for margin reporting)
+  returnedQuantity  Int     @default(0) // how much of this line has been refunded so far
+
+  returns SaleReturn[]
 
   @@index([saleId])
   @@index([productId])
+}
+
+// A (partial) refund against one sale line — stock goes back to the batch it
+// came from (if that batch still exists) and a RETURN stock movement is
+// logged alongside it.
+model SaleReturn {
+  id           String   @id @default(cuid())
+  saleItemId   String
+  saleItem     SaleItem @relation(fields: [saleItemId], references: [id])
+  quantity     Int
+  refundAmount Float
+  reason       String?
+  processedBy  String?
+  createdAt    DateTime @default(now())
+
+  @@index([saleItemId])
+}
+
+// Generic append-only trail of admin-level actions (user/supplier/category
+// management, marking payments, write-offs, returns) — separate from the
+// per-product StockMovement/PriceHistory, which only cover inventory.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorName String?
+  action    String // short machine-ish tag, e.g. "user.create", "supplier.create"
+  summary   String // one-line human-readable description
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model StockMovement {

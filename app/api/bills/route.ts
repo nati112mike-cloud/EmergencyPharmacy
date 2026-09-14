@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createBill } from "@/lib/payments";
 import { BillType, RecurrenceInterval } from "@/lib/types";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
+import { logAudit } from "@/lib/auditLog";
 
 export async function GET() {
   const admin = await requireAdmin();
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       isRecurring: !!isRecurring,
       recurrenceInterval: recurrenceInterval as RecurrenceInterval | undefined,
     });
+    await logAudit(admin.name, "bill.create", `Added bill "${bill.title}" ($${bill.amount.toFixed(2)})`);
     return NextResponse.json(bill, { status: 201 });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to create bill";

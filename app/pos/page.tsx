@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Product = {
   id: string;
   sku: string;
+  barcode: string | null;
   name: string;
   price: number;
   displayStock: number;
@@ -15,6 +16,34 @@ type Product = {
 
 type CartLine = { productId: string; name: string; price: number; quantity: number; stock: number };
 
+type QueuedSale = {
+  localId: string;
+  items: { productId: string; quantity: number }[];
+  paymentMethod: string;
+  cashierName?: string;
+  totalAmount: number;
+  queuedAt: string;
+};
+
+const QUEUE_KEY = "pos-offline-queue";
+
+function loadQueue(): QueuedSale[] {
+  try {
+    const raw = localStorage.getItem(QUEUE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveQueue(queue: QueuedSale[]) {
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // localStorage unavailable (private browsing, etc.) — queue just won't persist across reloads
+  }
+}
+
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
@@ -24,13 +53,73 @@ export default function PosPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<{ saleId: string; totalAmount: number } | null>(null);
+  const [queuedNote, setQueuedNote] = useState("");
+  const [queue, setQueue] = useState<QueuedSale[]>([]);
+  const [online, setOnline] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [scanSupported, setScanSupported] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+
+  const loadProducts = useCallback(() => {
+    fetch("/api/products").then((r) => r.json()).then(setProducts);
+  }, []);
+
+  const syncQueue = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const current = loadQueue();
+    if (current.length === 0) return;
+    setSyncing(true);
+    const remaining = [...current];
+    while (remaining.length > 0) {
+      const next = remaining[0];
+      try {
+        const res = await fetch("/api/sales", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            items: next.items,
+            paymentMethod: next.paymentMethod,
+            cashierName: next.cashierName,
+          }),
+        });
+        if (!res.ok) break; // a real error (e.g. stock ran out) — stop and let someone look at it
+        remaining.shift();
+        setQueue([...remaining]);
+        saveQueue(remaining);
+      } catch {
+        break; // still offline — stop, will retry later
+      }
+    }
+    setSyncing(false);
+    if (remaining.length === 0) loadProducts();
+  }, [loadProducts]);
 
   useEffect(() => {
-    fetch("/api/products").then((r) => r.json()).then(setProducts);
+    loadProducts();
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => u && setCashierName((prev) => prev || u.name))
       .catch(() => {});
+
+    setQueue(loadQueue());
+    setOnline(navigator.onLine);
+    setScanSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
+
+    const goOnline = () => {
+      setOnline(true);
+      syncQueue();
+    };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    syncQueue();
+    const interval = setInterval(syncQueue, 30000);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const results = useMemo(() => {
@@ -55,6 +144,24 @@ export default function PosPage() {
     setQuery("");
   }
 
+  // A hardware barcode scanner behaves like a keyboard: it types the code
+  // fast and sends Enter. So the plain search box doubles as a scan input —
+  // if what's typed exactly matches a product's barcode, add it straight to
+  // the cart instead of requiring a manual pick from the results list.
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    const match = products.find((p) => p.barcode && p.barcode === query.trim());
+    if (match) {
+      if (match.displayStock <= 0) {
+        setError(`${match.name} has no display stock to sell.`);
+        return;
+      }
+      addToCart(match);
+    } else if (results.length === 1) {
+      addToCart(results[0]);
+    }
+  }
+
   function updateQty(productId: string, quantity: number) {
     setCart((prev) =>
       prev.map((l) => (l.productId === productId ? { ...l, quantity: Math.max(1, quantity) } : l))
@@ -70,43 +177,86 @@ export default function PosPage() {
   async function checkout() {
     setSubmitting(true);
     setError("");
-    const res = await fetch("/api/sales", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity })),
-        paymentMethod,
-        cashierName: cashierName || undefined,
-      }),
-    });
-    setSubmitting(false);
-    if (!res.ok) {
+    setQueuedNote("");
+    const payload = {
+      items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+      paymentMethod,
+      cashierName: cashierName || undefined,
+    };
+
+    try {
+      const res = await fetch("/api/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setSubmitting(false);
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error ?? "Checkout failed");
+        return;
+      }
       const data = await res.json();
-      setError(data.error ?? "Checkout failed");
-      return;
+      setReceipt(data);
+      setCart([]);
+      loadProducts();
+    } catch {
+      // fetch itself threw — no connection, not a server rejection. Queue it
+      // so the cashier can keep working instead of losing the sale.
+      setSubmitting(false);
+      const queued: QueuedSale = {
+        localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        ...payload,
+        totalAmount: total,
+        queuedAt: new Date().toISOString(),
+      };
+      const next = [...loadQueue(), queued];
+      saveQueue(next);
+      setQueue(next);
+      setQueuedNote("No connection — sale saved offline and will sync automatically once you're back online.");
+      setCart([]);
     }
-    const data = await res.json();
-    setReceipt(data);
-    setCart([]);
-    fetch("/api/products").then((r) => r.json()).then(setProducts);
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Point of Sale</h1>
-        <p className="text-slate-500">Search a product, add it to the cart, and check out.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Point of Sale</h1>
+          <p className="text-slate-500">Search a product, add it to the cart, and check out.</p>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          {!online && <span className="badge badge-danger">Offline</span>}
+          {queue.length > 0 && (
+            <span className="badge badge-warning">
+              {queue.length} sale{queue.length > 1 ? "s" : ""} waiting to sync
+            </span>
+          )}
+          {queue.length > 0 && (
+            <button className="text-sm font-medium text-brand-600" disabled={syncing} onClick={syncQueue}>
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">
         <div className="card md:col-span-2">
-          <input
-            className="input"
-            placeholder="Search by product name or SKU…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-          />
+          <div className="flex gap-2">
+            <input
+              className="input"
+              placeholder="Search by name/SKU, or scan a barcode…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              autoFocus
+            />
+            {scanSupported && (
+              <button type="button" className="btn-secondary whitespace-nowrap" onClick={() => setScanOpen(true)}>
+                📷 Scan
+              </button>
+            )}
+          </div>
           {results.length > 0 && (
             <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
               {results.map((p) => (
@@ -197,6 +347,9 @@ export default function PosPage() {
             {submitting ? "Processing…" : "Complete Sale"}
           </button>
           {error && <p className="text-sm text-red-600">{error}</p>}
+          {queuedNote && (
+            <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">{queuedNote}</div>
+          )}
           {receipt && (
             <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">
               Sale recorded — total ${receipt.totalAmount.toFixed(2)} (receipt {receipt.saleId.slice(-6)})
@@ -204,6 +357,17 @@ export default function PosPage() {
           )}
         </div>
       </div>
+
+      {scanOpen && (
+        <CameraScanModal
+          products={products}
+          onClose={() => setScanOpen(false)}
+          onDetected={(p) => {
+            addToCart(p);
+            setScanOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -259,6 +423,96 @@ function QtyStepper({
       >
         +
       </button>
+    </div>
+  );
+}
+
+// Minimal type for the native BarcodeDetector API — not yet in TS's default
+// DOM lib, and only feature-detected/used when window.BarcodeDetector exists
+// (Chrome/Edge on Android and most desktop; gracefully absent elsewhere).
+type DetectedBarcode = { rawValue: string };
+type BarcodeDetectorLike = { detect: (source: CanvasImageSource) => Promise<DetectedBarcode[]> };
+
+function CameraScanModal({
+  products,
+  onClose,
+  onDetected,
+}: {
+  products: Product[];
+  onClose: () => void;
+  onDetected: (p: Product) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let raf = 0;
+    let stopped = false;
+
+    async function start() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch {
+        setError("Couldn't access the camera — check your browser's camera permission.");
+        return;
+      }
+
+      const Detector = (window as unknown as { BarcodeDetector: new () => BarcodeDetectorLike }).BarcodeDetector;
+      const detector = new Detector();
+
+      async function tick() {
+        if (stopped || !videoRef.current) return;
+        try {
+          const codes = await detector.detect(videoRef.current);
+          const code = codes[0]?.rawValue;
+          if (code) {
+            const match = products.find((p) => p.barcode === code);
+            if (match) {
+              onDetected(match);
+              return;
+            }
+          }
+        } catch {
+          // transient decode error — just try again next frame
+        }
+        raf = requestAnimationFrame(tick);
+      }
+      raf = requestAnimationFrame(tick);
+    }
+
+    start();
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-4 shadow-lg">
+        <h2 className="mb-2 text-lg font-semibold">Scan a barcode</h2>
+        {error ? (
+          <p className="text-sm text-red-600">{error}</p>
+        ) : (
+          <video ref={videoRef} className="w-full rounded-lg bg-black" muted playsInline />
+        )}
+        <p className="mt-2 text-xs text-slate-500">
+          Point the camera at the product's barcode. Only products with a barcode saved in Inventory
+          will be recognized.
+        </p>
+        <div className="mt-3 flex justify-end">
+          <button className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
+import { logAudit } from "@/lib/auditLog";
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const admin = await requireAdmin();
@@ -21,5 +22,6 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
   }
 
   await prisma.user.delete({ where: { id: params.id } });
+  await logAudit(admin.name, "user.delete", `Removed user "${target.username}" (${target.name})`);
   return NextResponse.json({ ok: true });
 }

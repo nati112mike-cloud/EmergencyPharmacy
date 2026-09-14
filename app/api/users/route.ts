@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
 import { hashPassword } from "@/lib/auth/password";
+import { logAudit } from "@/lib/auditLog";
 
 export async function GET() {
   const admin = await requireAdmin();
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
       },
       select: { id: true, username: true, name: true, role: true, createdAt: true },
     });
+    await logAudit(admin.name, "user.create", `Added user "${user.username}" (${user.name}, ${user.role})`);
     return NextResponse.json(user, { status: 201 });
   } catch (err: unknown) {
     const message =

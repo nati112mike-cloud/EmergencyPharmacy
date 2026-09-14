@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
+import { logAudit } from "@/lib/auditLog";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const admin = await requireAdmin();
   if (admin instanceof NextResponse) return admin;
 
   const body = await req.json();
-  const { name, categoryId, unit, description, price, reorderPoint, reorderQty, requiresRx, defaultSupplierId } = body;
+  const { name, barcode, categoryId, unit, description, price, reorderPoint, reorderQty, requiresRx, defaultSupplierId } = body;
 
   try {
     const existing = price !== undefined ? await prisma.product.findUnique({ where: { id: params.id } }) : null;
@@ -16,6 +17,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       where: { id: params.id },
       data: {
         ...(name !== undefined && { name }),
+        ...(barcode !== undefined && { barcode: barcode?.trim() || null }),
         ...(categoryId !== undefined && { categoryId: categoryId || null }),
         ...(unit !== undefined && { unit }),
         ...(description !== undefined && { description }),
@@ -50,7 +52,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   if (admin instanceof NextResponse) return admin;
 
   try {
+    const target = await prisma.product.findUnique({ where: { id: params.id } });
     await prisma.product.delete({ where: { id: params.id } });
+    if (target) await logAudit(admin.name, "product.delete", `Deleted product "${target.name}" (${target.sku})`);
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     const isFkError = err instanceof Error && err.message.includes("Foreign key constraint");

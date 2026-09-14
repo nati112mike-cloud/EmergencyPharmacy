@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isExpired } from "@/lib/business";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
+import { logAudit } from "@/lib/auditLog";
 
 export async function GET() {
   const products = await prisma.product.findMany({
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     sku,
+    barcode,
     name,
     categoryId,
     categoryName,
@@ -58,6 +60,7 @@ export async function POST(req: NextRequest) {
     const product = await prisma.product.create({
       data: {
         sku,
+        barcode: barcode?.trim() || null,
         name,
         categoryId: resolvedCategoryId,
         unit: unit || "unit",
@@ -69,6 +72,7 @@ export async function POST(req: NextRequest) {
         defaultSupplierId: defaultSupplierId || null,
       },
     });
+    await logAudit(admin.name, "product.create", `Added product "${product.name}" (${product.sku})`);
     return NextResponse.json(product, { status: 201 });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to create product";

@@ -5,6 +5,7 @@ export type PurchaseOrderStatus = "DRAFT" | "ORDERED" | "RECEIVED" | "CANCELLED"
 export type StockMovementType =
   | "PURCHASE_RECEIPT"
   | "SALE"
+  | "RETURN"
   | "ADJUSTMENT"
   | "WRITE_OFF_EXPIRED"
   | "TRANSFER_TO_DISPLAY"

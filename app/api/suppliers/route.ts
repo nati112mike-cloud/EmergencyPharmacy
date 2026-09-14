@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
+import { logAudit } from "@/lib/auditLog";
 
 // GET is open to any signed-in user — STAFF needs the supplier list to pick
 // one when creating a purchase order, even though managing suppliers
@@ -34,5 +35,6 @@ export async function POST(req: NextRequest) {
       notes: notes || null,
     },
   });
+  await logAudit(admin.name, "supplier.create", `Added supplier "${supplier.name}"`);
   return NextResponse.json(supplier, { status: 201 });
 }
