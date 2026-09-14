@@ -4,11 +4,12 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
 // Everything requires a signed-in session except the login page itself, the
 // login API it calls, and the notifications cron endpoint (which Vercel
 // Cron calls with no session — it authenticates via CRON_SECRET instead,
-// checked inside that route). Static assets are excluded so the login page
-// can actually load its CSS/JS before there's a session.
+// checked inside that route). Static assets, the PWA icons/manifest, and
+// favicon.ico are excluded so the login page (and a phone's home-screen
+// install prompt) can load them before there's a session.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|login|api/auth/login|api/notifications/run).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|manifest.webmanifest|login|api/auth/login|api/notifications/run).*)",
   ],
 };
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import PasswordInput from "@/components/PasswordInput";
+import { APP_VERSION, CHANGELOG } from "@/lib/changelog";
 
 // STAFF only gets POS and Purchase Orders (posting a sale / posting a
 // purchase) — everything else is admin-only, both here (hidden nav) and in
@@ -29,6 +30,7 @@ export default function NavBar() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
 
   useEffect(() => {
     if (pathname === "/login") return;
@@ -98,7 +100,7 @@ export default function NavBar() {
                 {user.name} ▾
               </button>
               {menuOpen && (
-                <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-slate-200 bg-white py-1 shadow-md">
+                <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-md">
                   <button
                     className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                     onClick={() => {
@@ -107,6 +109,15 @@ export default function NavBar() {
                     }}
                   >
                     Change Password
+                  </button>
+                  <button
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowWhatsNew(true);
+                    }}
+                  >
+                    What&apos;s New (v{APP_VERSION})
                   </button>
                   <button
                     className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-slate-50"
@@ -122,7 +133,37 @@ export default function NavBar() {
       </div>
 
       {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
+      {showWhatsNew && <WhatsNewModal onClose={() => setShowWhatsNew(false)} />}
     </header>
+  );
+}
+
+function WhatsNewModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4">
+      <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="mb-4 text-lg font-semibold">What&apos;s New</h2>
+        <div className="space-y-4">
+          {CHANGELOG.map((entry) => (
+            <div key={entry.version}>
+              <p className="text-sm font-semibold text-slate-900">
+                v{entry.version} <span className="font-normal text-slate-400">· {entry.date}</span>
+              </p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                {entry.notes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end">
+          <button className="btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
