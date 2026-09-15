@@ -8,13 +8,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (admin instanceof NextResponse) return admin;
 
   const body = await req.json().catch(() => ({}));
-  const { paidAmount, paidDate } = body;
+  const { paidAmount, paidDate, accountId } = body;
 
   try {
     const bill = await markBillPaid(
       params.id,
       paidAmount != null ? Number(paidAmount) : undefined,
-      paidDate ? new Date(paidDate) : undefined
+      paidDate ? new Date(paidDate) : undefined,
+      accountId || undefined,
+      admin.name
     );
     await logAudit(admin.name, "bill.pay", `Marked bill "${bill.title}" paid ($${(bill.paidAmount ?? bill.amount).toFixed(2)})`);
     return NextResponse.json(bill);

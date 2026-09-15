@@ -24,22 +24,27 @@ model User {
   role                String    @default("STAFF") // UserRole: ADMIN | STAFF
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
+  // Forgot-password: a 6-digit code emailed to the owner's inbox (not the
+  // user's own — see lib/auth/passwordReset.ts), hashed like a password and
+  // short-lived.
+  resetCodeHash       String?
+  resetCodeExpires    DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
 
 model Supplier {
-  id            String          @id @default(cuid())
-  name          String
-  contactName   String?
-  phone         String?
-  email         String?
-  address       String?
-  notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  products      Product[]
-  batches       Batch[]
+  id             String          @id @default(cuid())
+  name           String
+  contactName    String?
+  phone          String?
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  products       Product[]
+  batches        Batch[]
   purchaseOrders PurchaseOrder[]
 }
 
@@ -53,47 +58,74 @@ model Category {
 }
 
 model Product {
-  id                String   @id @default(cuid())
-  sku               String   @unique
-  barcode           String?  @unique // UPC/EAN from a hardware scanner or camera scan; optional
+  id                String    @id @default(cuid())
+  sku               String    @unique
+  barcode           String?   @unique // UPC/EAN from a hardware scanner or camera scan; optional
   name              String
   categoryId        String?
   category          Category? @relation(fields: [categoryId], references: [id])
-  unit              String   @default("unit") // e.g. box, bottle, strip
+  unit              String    @default("unit") // e.g. box, bottle, strip
   description       String?
-  price             Float    // current sale price
-  reorderPoint      Int      @default(10) // trigger reorder when total stock <= this
-  reorderQty        Int      @default(20) // suggested quantity to reorder
-  requiresRx        Boolean  @default(false)
+  price             Float // current sale price
+  reorderPoint      Int       @default(10) // trigger reorder when total stock <= this
+  reorderQty        Int       @default(20) // suggested quantity to reorder
+  requiresRx        Boolean   @default(false)
   defaultSupplierId String?
   defaultSupplier   Supplier? @relation(fields: [defaultSupplierId], references: [id])
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   batches            Batch[]
   saleItems          SaleItem[]
   purchaseOrderItems PurchaseOrderItem[]
   stockMovements     StockMovement[]
   priceHistory       PriceHistory[]
+  units              ProductUnit[]
 
   @@index([categoryId])
 }
 
+// Packaging/unit-of-measure conversions for one product — e.g. a strip of
+// 10 tablets, a pack of 10 strips, a box of 10 packs. All stock (Batch.
+// quantity, StockMovement.quantity, SaleItem.quantity) is always tracked in
+// the product's smallest/base unit (factor 1) so stock math never deals in
+// fractions; POS and Receive Stock convert to/from base units using these
+// factors and charge/cost at the chosen unit's own price, not a computed
+// fraction of the base price (real packaging price isn't always perfectly
+// linear — a box is often a little cheaper per-unit than loose packs).
+model ProductUnit {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String // e.g. "strip", "pack", "box" — additional packaging levels on top of the product's own base unit/price
+  factor    Int // how many base units equal one of this unit (must be > 1)
+  price     Float // selling price for one of this unit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, name])
+  @@index([productId])
+}
+
 model Batch {
-  id           String    @id @default(cuid())
-  productId    String
-  product      Product   @relation(fields: [productId], references: [id])
-  batchNumber  String
-  quantity     Int // remaining quantity in this batch, at this location
-  costPrice    Float // unit cost for margin calculations
-  expiryDate   DateTime
-  receivedDate DateTime  @default(now())
-  supplierId   String?
-  supplier     Supplier? @relation(fields: [supplierId], references: [id])
+  id                String    @id @default(cuid())
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id])
+  batchNumber       String
+  quantity          Int // remaining quantity in this batch, at this location
+  costPrice         Float // unit cost for margin calculations
+  expiryDate        DateTime
+  receivedDate      DateTime  @default(now())
+  supplierId        String?
+  supplier          Supplier? @relation(fields: [supplierId], references: [id])
   // Back stock ("STORE") vs shelf stock ("DISPLAY") — see lib/types.ts
   // BatchLocation. POS sells from DISPLAY only; a transfer moves quantity
   // from a STORE batch into a DISPLAY batch of the same lot.
-  location     String    @default("STORE")
+  location          String    @default("STORE")
+  // What was actually keyed in at receiving (e.g. "5 boxes"), purely for
+  // display in history — quantity above is already converted to base units.
+  receivedUnitLabel String?
+  receivedUnitQty   Int?
 
   saleItems      SaleItem[]
   stockMovements StockMovement[]
@@ -104,26 +136,30 @@ model Batch {
 }
 
 model PurchaseOrder {
-  id           String              @id @default(cuid())
+  id           String    @id @default(cuid())
   supplierId   String
-  supplier     Supplier            @relation(fields: [supplierId], references: [id])
-  status       String              @default("DRAFT") // PurchaseOrderStatus
-  orderDate    DateTime            @default(now())
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+  status       String    @default("DRAFT") // PurchaseOrderStatus
+  orderDate    DateTime  @default(now())
   expectedDate DateTime?
   receivedDate DateTime?
   notes        String?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Payment tracking for credit purchases — separate from receiving status,
   // since goods can arrive well before the supplier's invoice is due.
-  dueDate          DateTime?
-  paymentStatus    String    @default("UNPAID") // PaymentStatus: UNPAID | PAID
-  paidDate         DateTime?
-  paidAmount       Float?
-  invoiceFileName  String? // original uploaded filename, for display
-  invoiceFilePath  String? // storage key, see lib/fileStorage.ts
-  createdBy        String? // name of the user who posted this purchase
+  dueDate           DateTime?
+  paymentStatus     String          @default("UNPAID") // PaymentStatus: UNPAID | PAID
+  paidDate          DateTime?
+  paidAmount        Float?
+  invoiceFileName   String? // original uploaded filename, for display
+  invoiceFilePath   String? // storage key, see lib/fileStorage.ts
+  createdBy         String? // name of the user who posted this purchase
+  // Which FinanceAccount the payment came out of, when paid — posts a
+  // matching debit FinanceTransaction there.
+  paidFromAccountId String?
+  paidFromAccount   FinanceAccount? @relation(fields: [paidFromAccountId], references: [id])
 
   items PurchaseOrderItem[]
 
@@ -135,19 +171,21 @@ model PurchaseOrder {
 // Non-inventory payables: rent, salaries, and anything else that recurs on
 // a schedule rather than arriving as a supplier delivery.
 model Bill {
-  id                 String    @id @default(cuid())
+  id                 String          @id @default(cuid())
   type               String // BillType: RENT | SALARY | OTHER
   title              String
   amount             Float
   dueDate            DateTime
-  paymentStatus      String    @default("UNPAID") // PaymentStatus: UNPAID | PAID
+  paymentStatus      String          @default("UNPAID") // PaymentStatus: UNPAID | PAID
   paidDate           DateTime?
   paidAmount         Float?
   notes              String?
-  isRecurring        Boolean   @default(false)
+  isRecurring        Boolean         @default(false)
   recurrenceInterval String? // RecurrenceInterval: WEEKLY | MONTHLY | YEARLY
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  paidFromAccountId  String?
+  paidFromAccount    FinanceAccount? @relation(fields: [paidFromAccountId], references: [id])
 
   @@index([dueDate])
   @@index([paymentStatus])
@@ -166,28 +204,47 @@ model PurchaseOrderItem {
 }
 
 model Sale {
-  id            String        @id @default(cuid())
-  saleDate      DateTime      @default(now())
+  id            String     @id @default(cuid())
+  saleDate      DateTime   @default(now())
   totalAmount   Float
-  paymentMethod String  @default("CASH") // PaymentMethod
+  paymentMethod String     @default("CASH") // PaymentMethod
   cashierName   String?
   items         SaleItem[]
 
+  // Set when paymentMethod is BANK_TRANSFER or TELEBIRR — which
+  // FinanceAccount the money landed in; a FinanceTransaction is posted
+  // there immediately (the money's logically already arrived).
+  financeAccountId String?
+  financeAccount   FinanceAccount? @relation(fields: [financeAccountId], references: [id])
+
+  // Set when paymentMethod is CREDIT — a loan/receivable owed by this
+  // customer. No FinanceTransaction is posted until it's collected (see
+  // lib/finance.ts collectCreditSale), mirroring how Bill/PurchaseOrder
+  // payment status already works elsewhere in this app.
+  creditorName        String?
+  creditPaymentStatus String? // PaymentStatus: UNPAID | PAID — null when not a credit sale
+  creditPaidDate      DateTime?
+
   @@index([saleDate])
+  @@index([creditPaymentStatus])
 }
 
 model SaleItem {
-  id                String  @id @default(cuid())
-  saleId            String
-  sale              Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId         String
-  product           Product @relation(fields: [productId], references: [id])
-  batchId           String?
-  batch             Batch?  @relation(fields: [batchId], references: [id])
-  quantity          Int
-  unitPrice         Float // price charged at time of sale
-  unitCost          Float // cost at time of sale (for margin reporting)
-  returnedQuantity  Int     @default(0) // how much of this line has been refunded so far
+  id               String  @id @default(cuid())
+  saleId           String
+  sale             Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId        String
+  product          Product @relation(fields: [productId], references: [id])
+  batchId          String?
+  batch            Batch?  @relation(fields: [batchId], references: [id])
+  quantity         Int // always in the product's base unit
+  unitPrice        Float // price charged at time of sale, for one base unit
+  unitCost         Float // cost at time of sale (for margin reporting)
+  returnedQuantity Int     @default(0) // how much of this line has been refunded so far
+  // What the cashier actually picked at POS (e.g. "box" x2) when it wasn't
+  // sold as loose base units — purely for receipt/history display.
+  soldUnitLabel    String?
+  soldUnitQty      Int?
 
   returns SaleReturn[]
 
@@ -225,16 +282,16 @@ model AuditLog {
 }
 
 model StockMovement {
-  id         String            @id @default(cuid())
-  productId  String
-  product    Product           @relation(fields: [productId], references: [id])
-  batchId    String?
-  batch      Batch?            @relation(fields: [batchId], references: [id])
-  type       String            // StockMovementType
-  quantity   Int // positive = stock in, negative = stock out
-  note       String?
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  batchId     String?
+  batch       Batch?   @relation(fields: [batchId], references: [id])
+  type        String // StockMovementType
+  quantity    Int // positive = stock in, negative = stock out
+  note        String?
   performedBy String? // name of the user who triggered this movement
-  createdAt  DateTime          @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([productId])
   @@index([createdAt])
@@ -252,6 +309,52 @@ model PriceHistory {
   createdAt DateTime @default(now())
 
   @@index([productId])
+}
+
+// One row per cash drawer / bank / mobile-money account. Balances are never
+// stored directly — always computed as openingBalance + sum(transactions) —
+// so a balance can't silently drift out of sync with its transaction trail;
+// that's the whole point of a ledger over a single mutable number.
+model FinanceAccount {
+  id             String   @id @default(cuid())
+  type           String // FinanceAccountType: CASH | BANK | MOBILE_MONEY
+  name           String // display name, e.g. "Cash Drawer", "CBE - Meaza Pharmacy", "Telebirr"
+  bankName       String?
+  accountNumber  String?
+  openingBalance Float    @default(0)
+  archived       Boolean  @default(false) // hide from new-transaction pickers without deleting history
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  transactions FinanceTransaction[]
+  sales        Sale[]
+  billsPaid    Bill[]
+  posPaid      PurchaseOrder[]
+
+  @@index([type])
+}
+
+// Every movement of money in or out of an account — sales, cash deposits
+// into a bank, collected credit/loans, bill and supplier payments. A cash
+// deposit posts two linked transactions (a debit on Cash Drawer, a credit
+// on the destination bank) via the same transferGroupId, so cash-on-hand
+// and bank balances stay reconcilable against each other, not just each
+// internally consistent.
+model FinanceTransaction {
+  id              String         @id @default(cuid())
+  accountId       String
+  account         FinanceAccount @relation(fields: [accountId], references: [id])
+  type            String // FinanceTransactionType
+  amount          Float // positive = money in, negative = money out
+  reference       String? // free-text note
+  saleId          String?
+  transferGroupId String? // links the two legs of a same transfer (e.g. cash deposit)
+  performedBy     String?
+  createdAt       DateTime       @default(now())
+
+  @@index([accountId])
+  @@index([createdAt])
+  @@index([transferGroupId])
 }
 
 model WeeklyReport {
@@ -272,16 +375,16 @@ model WeeklyReport {
 
 // Replaces the weekly cadence for day-to-day use — one row per calendar day.
 model DailyReport {
-  id                  String   @id @default(cuid())
-  reportDate          DateTime @unique // midnight of the day this covers
-  totalRevenue        Float
-  totalCost           Float
-  totalProfit         Float
-  totalSalesCount     Int
-  totalPurchaseCount  Int      @default(0)
-  totalPurchaseCost   Float    @default(0)
-  topSellersJson      String
-  lowStockJson        String
-  expiringJson        String
-  createdAt           DateTime @default(now())
+  id                 String   @id @default(cuid())
+  reportDate         DateTime @unique // midnight of the day this covers
+  totalRevenue       Float
+  totalCost          Float
+  totalProfit        Float
+  totalSalesCount    Int
+  totalPurchaseCount Int      @default(0)
+  totalPurchaseCost  Float    @default(0)
+  topSellersJson     String
+  lowStockJson       String
+  expiringJson       String
+  createdAt          DateTime @default(now())
 }

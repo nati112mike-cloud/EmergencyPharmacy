@@ -60,11 +60,13 @@ built directly around that loop instead of being a generic CRUD admin:
 | `Category` | Open-ended product category (Drug, Cosmetics, Skincare, Off-Drugs, Formula Milk, Sanitation, + anything added) |
 | `Product` | Catalog entry: SKU, price, category, reorder point/quantity, default supplier |
 | `Batch` | A received lot of a product: quantity remaining, cost, expiry date, and `location` (STORE or DISPLAY) |
+| `ProductUnit` | A packaging level above the base unit (e.g. a "box" of 10) with its own factor and sell price |
 | `Supplier` | Vendor contact info |
 | `PurchaseOrder` / `PurchaseOrderItem` | Orders placed with suppliers; "receive" turns items into `Batch`es; also carries `dueDate`/`paymentStatus`/invoice attachment for credit purchases |
-| `Sale` / `SaleItem` | POS transactions, recorded against specific batches (for FEFO + margin) |
+| `Sale` / `SaleItem` | POS transactions, recorded against specific batches (for FEFO + margin); credit sales carry a `creditorName` and `creditPaymentStatus` |
 | `StockMovement` | Audit trail of every stock in/out event |
 | `Bill` | Rent, salary, or other recurring/one-off payables (not tied to a supplier delivery) |
+| `FinanceAccount` / `FinanceTransaction` | Cash/bank/mobile-money accounts and their ledger — see Finance below |
 | `WeeklyReport` | Persisted snapshot of a week's revenue/profit/alerts |
 | `User` | A staff login: username, hashed password, name, role (ADMIN or STAFF) |
 
@@ -131,9 +133,11 @@ leaked. See `.env.example` for how to generate one.
   decremented FEFO across batches automatically.
 - **Inventory** (`/inventory`) — every product with store vs. display stock,
   category, expiry status, and batch-level detail; add new products (with
-  inline "add new category"); record stock receipts; transfer stock between
-  store and display; **bulk-import products and stock from an Excel file**
-  (see below).
+  inline "add new category"); record stock receipts (optionally in a
+  packaging unit like a box, with a prompt to reprice); manage a product's
+  packaging units; transfer stock between store and display;
+  **bulk-import products and stock from an Excel file** (see below); rename
+  categories/unit labels in bulk from "Categories & Units".
 - **Suppliers** (`/suppliers`) — supplier directory, one-click purchase
   orders from reorder suggestions, and marking POs received (which creates
   the corresponding batches); shows payment status/due date and an invoice
@@ -142,6 +146,9 @@ leaked. See `.env.example` for how to generate one.
   bill, soonest due first, with overdue ones flagged; add a bill (with
   optional recurrence), mark anything paid, or **upload a purchase invoice**
   (see below).
+- **Finance** (`/finance`, Admin only) — cash/bank/mobile-money accounts with
+  running balances, per-account ledgers, recording a cash-to-bank deposit,
+  and collecting outstanding credit sales (see below).
 - **Reports** (`/reports`) — week-by-week revenue, cost, profit, top sellers,
   low stock, and expiring stock, browsable by week.
 - **Users** (`/users`, Admin only) — add/remove/reset staff logins, and send
@@ -193,6 +200,48 @@ without failing the rest of the import.
 Implementation: `lib/inventoryImport.ts` (parsing + upsert logic, via
 [`exceljs`](https://github.com/exceljs/exceljs)), `app/api/inventory/import`
 (upload) and `app/api/inventory/import/template` (template download).
+
+## Packaging units (boxes, packs, strips)
+
+A product's own `unit`/`price` stay the base level it's tracked in (e.g. one
+tablet). `ProductUnit` rows add packaging levels above that — a "box" of 20,
+a "strip" of 10 — each with its own factor and sell price, managed from the
+"Units" panel on a product row in Inventory.
+
+- **Receiving stock**: pick a unit on the "Receive stock" form and enter the
+  quantity/cost in that unit (e.g. "3 boxes at $85/box") — it's converted to
+  base units/cost for storage, with the original wording kept on the batch
+  for display. New stock at a new cost is also the moment to reprice: the
+  same form can update the base price and/or that unit's price in one step,
+  which applies to *all* remaining stock of the product (price lives on the
+  product/unit, not per-batch).
+- **Selling**: the POS cart lets any line be sold as the base unit or one of
+  its packaging units. A non-base unit must be fulfilled from a single
+  batch (a "box" can't be half from one lot and half from another) —
+  checkout picks the soonest-expiring batch with enough stock automatically.
+
+## Finance and credit sales
+
+The Finance page (`/finance`, Admin only) tracks where money actually is —
+cash drawer, bank accounts, mobile money — as a simple ledger
+(`FinanceAccount`/`FinanceTransaction`), rather than assuming every sale
+becomes cash on hand.
+
+- **Payment methods**: POS's Cash/Card/Insurance/Other don't touch the
+  ledger (no dedicated account to post to). **Bank Transfer** posts the sale
+  straight into the bank account picked at checkout; **Telebirr** posts into
+  an auto-created "Telebirr" mobile-money account; **Credit** records the
+  sale as owed by a named buyer instead of collecting payment now.
+- **Credit sales**: appear under "Outstanding Credit Sales" on the Finance
+  page until "Collect" is used to record which account the payment landed
+  in — that posts a `CREDIT_COLLECTED` transaction and marks the sale paid.
+- **Cash deposits**: "Move Money Between Accounts" records the standard
+  "cash collected at the till, deposited into the bank" operation as two
+  linked ledger entries (debit the source, credit the destination), so both
+  accounts stay independently auditable.
+- Every account's balance (`lib/finance.ts`) is always computed from its
+  opening balance plus its transactions — never stored and drifted out of
+  sync.
 
 ## Payments: bills, credit purchases, and invoice upload
 

@@ -10,7 +10,14 @@ export type StockMovementType =
   | "WRITE_OFF_EXPIRED"
   | "TRANSFER_TO_DISPLAY"
   | "TRANSFER_TO_STORE";
-export type PaymentMethod = "CASH" | "CARD" | "INSURANCE" | "OTHER";
+export type PaymentMethod =
+  | "CASH"
+  | "CARD"
+  | "INSURANCE"
+  | "BANK_TRANSFER"
+  | "TELEBIRR"
+  | "CREDIT"
+  | "OTHER";
 
 // Back stock ("STORE") vs shelf stock ("DISPLAY"). POS only sells from
 // DISPLAY batches — that's what's physically available to hand a customer.
@@ -55,3 +62,13 @@ export const UNIT_OPTIONS = [
   "roll",
   "piece",
 ] as const;
+
+// Finance ledger — see lib/finance.ts.
+export type FinanceAccountType = "CASH" | "BANK" | "MOBILE_MONEY";
+export type FinanceTransactionType =
+  | "SALE" // a POS sale landing directly in an account (bank transfer, Telebirr)
+  | "CASH_DEPOSIT" // cash drawer -> bank (posts two linked transactions)
+  | "CREDIT_COLLECTED" // a customer paying off what they owed
+  | "BILL_PAYMENT"
+  | "PURCHASE_PAYMENT"
+  | "ADJUSTMENT";

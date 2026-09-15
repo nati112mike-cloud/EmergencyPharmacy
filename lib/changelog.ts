@@ -1,7 +1,7 @@
 // Bump APP_VERSION and add an entry here whenever a user-visible change
 // ships — shown via the "What's New" panel in the NavBar user menu so staff
 // can see what changed without asking.
-export const APP_VERSION = "1.2.0";
+export const APP_VERSION = "1.3.0";
 
 export type ChangelogEntry = {
   version: string;
@@ -10,6 +10,17 @@ export type ChangelogEntry = {
 };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "1.3.0",
+    date: "2026-09-15",
+    notes: [
+      "Packaging units — sell and receive stock in boxes/packs/strips as well as loose units, each with its own price.",
+      "New Finance page: cash/bank/mobile money accounts with running balances, transaction ledgers, and cash-to-bank deposits.",
+      "Credit sales — sell now, collect later; outstanding credit shows on the Finance page until collected.",
+      "POS now supports Bank Transfer and Telebirr as payment methods, posting straight into the matching finance account.",
+      "Inventory: rename categories and unit labels in bulk from a new \"Categories & Units\" panel.",
+    ],
+  },
   {
     version: "1.2.0",
     date: "2026-09-14",

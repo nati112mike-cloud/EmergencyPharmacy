@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { daysUntil } from "@/lib/business";
+import { postFinanceTransaction } from "@/lib/finance";
 import { BillType, PaymentStatus, RecurrenceInterval } from "@/lib/types";
 
 /** A payment is flagged "due soon" inside this many days. */
@@ -105,20 +106,38 @@ export async function createBill(data: CreateBillInput) {
  * next due date is already sitting on the Payments page the moment this
  * one is settled, instead of depending on someone to remember to add it.
  */
-export async function markBillPaid(billId: string, paidAmount?: number, paidDate?: Date) {
+export async function markBillPaid(
+  billId: string,
+  paidAmount?: number,
+  paidDate?: Date,
+  accountId?: string,
+  performedBy?: string
+) {
   return prisma.$transaction(async (tx) => {
     const bill = await tx.bill.findUnique({ where: { id: billId } });
     if (!bill) throw new Error("Bill not found");
     if (bill.paymentStatus === "PAID") throw new Error("Bill already marked paid");
 
+    const amount = paidAmount ?? bill.amount;
     const paid = await tx.bill.update({
       where: { id: billId },
       data: {
         paymentStatus: "PAID" as PaymentStatus,
         paidDate: paidDate ?? new Date(),
-        paidAmount: paidAmount ?? bill.amount,
+        paidAmount: amount,
+        paidFromAccountId: accountId,
       },
     });
+
+    if (accountId) {
+      await postFinanceTransaction(tx, {
+        accountId,
+        type: "BILL_PAYMENT",
+        amount: -amount,
+        reference: `Paid bill "${bill.title}"`,
+        performedBy,
+      });
+    }
 
     if (bill.isRecurring && bill.recurrenceInterval) {
       await tx.bill.create({
@@ -213,21 +232,39 @@ export async function createPurchaseOrderFromInvoice(input: CreatePOFromInvoiceI
 export async function markPurchaseOrderPaid(
   purchaseOrderId: string,
   paidAmount?: number,
-  paidDate?: Date
+  paidDate?: Date,
+  accountId?: string,
+  performedBy?: string
 ) {
-  const po = await prisma.purchaseOrder.findUnique({
-    where: { id: purchaseOrderId },
-    include: { items: true },
-  });
-  if (!po) throw new Error("Purchase order not found");
-  if (po.paymentStatus === "PAID") throw new Error("Purchase order already marked paid");
+  return prisma.$transaction(async (tx) => {
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: purchaseOrderId },
+      include: { items: true, supplier: true },
+    });
+    if (!po) throw new Error("Purchase order not found");
+    if (po.paymentStatus === "PAID") throw new Error("Purchase order already marked paid");
 
-  return prisma.purchaseOrder.update({
-    where: { id: purchaseOrderId },
-    data: {
-      paymentStatus: "PAID" as PaymentStatus,
-      paidDate: paidDate ?? new Date(),
-      paidAmount: paidAmount ?? poTotal(po.items),
-    },
+    const amount = paidAmount ?? poTotal(po.items);
+    const paid = await tx.purchaseOrder.update({
+      where: { id: purchaseOrderId },
+      data: {
+        paymentStatus: "PAID" as PaymentStatus,
+        paidDate: paidDate ?? new Date(),
+        paidAmount: amount,
+        paidFromAccountId: accountId,
+      },
+    });
+
+    if (accountId) {
+      await postFinanceTransaction(tx, {
+        accountId,
+        type: "PURCHASE_PAYMENT",
+        amount: -amount,
+        reference: `Paid supplier ${po.supplier.name} (PO ${po.id.slice(-8)})`,
+        performedBy,
+      });
+    }
+
+    return paid;
   });
 }

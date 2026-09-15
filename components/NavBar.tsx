@@ -16,6 +16,7 @@ const ADMIN_LINKS = [
   { href: "/inventory", label: "Inventory" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/payments", label: "Payments" },
+  { href: "/finance", label: "Finance" },
   { href: "/reports", label: "Reports" },
 ];
 const STAFF_LINKS = [

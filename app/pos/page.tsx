@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ModalBackdrop from "@/components/ModalBackdrop";
 
+type ProductUnit = { id: string; name: string; factor: number; price: number };
+
 type Product = {
   id: string;
   sku: string;
@@ -13,15 +15,31 @@ type Product = {
   storeStock: number;
   unit: string;
   category: { name: string } | null;
+  units: ProductUnit[];
 };
 
-type CartLine = { productId: string; name: string; price: number; quantity: number; stock: number };
+type FinanceAccount = { id: string; type: string; name: string };
+
+type CartLine = {
+  productId: string;
+  name: string;
+  price: number; // per the currently selected unit
+  basePrice: number; // the product's own (base-unit) price, for switching back
+  quantity: number; // in the currently selected unit
+  baseStock: number; // display stock, in base units
+  unitName?: string; // undefined = base unit
+  factor: number; // 1 for base unit
+  baseUnitLabel: string;
+  availableUnits: ProductUnit[];
+};
 
 type QueuedSale = {
   localId: string;
-  items: { productId: string; quantity: number }[];
+  items: { productId: string; quantity: number; unitName?: string }[];
   paymentMethod: string;
   cashierName?: string;
+  creditorName?: string;
+  financeAccountId?: string;
   totalAmount: number;
   queuedAt: string;
 };
@@ -47,9 +65,12 @@ function saveQueue(queue: QueuedSale[]) {
 
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState("CASH");
+  const [financeAccountId, setFinanceAccountId] = useState("");
+  const [creditorName, setCreditorName] = useState("");
   const [cashierName, setCashierName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -63,6 +84,7 @@ export default function PosPage() {
 
   const loadProducts = useCallback(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
+    fetch("/api/finance/accounts").then((r) => r.json()).then(setAccounts).catch(() => {});
   }, []);
 
   const syncQueue = useCallback(async () => {
@@ -81,6 +103,8 @@ export default function PosPage() {
             items: next.items,
             paymentMethod: next.paymentMethod,
             cashierName: next.cashierName,
+            creditorName: next.creditorName,
+            financeAccountId: next.financeAccountId,
           }),
         });
         if (!res.ok) break; // a real error (e.g. stock ran out) — stop and let someone look at it
@@ -134,15 +158,47 @@ export default function PosPage() {
   function addToCart(p: Product) {
     setReceipt(null);
     setCart((prev) => {
-      const existing = prev.find((l) => l.productId === p.id);
+      const existing = prev.find((l) => l.productId === p.id && !l.unitName);
       if (existing) {
         return prev.map((l) =>
-          l.productId === p.id ? { ...l, quantity: Math.min(l.quantity + 1, p.displayStock) } : l
+          l === existing ? { ...l, quantity: Math.min(l.quantity + 1, p.displayStock) } : l
         );
       }
-      return [...prev, { productId: p.id, name: p.name, price: p.price, quantity: 1, stock: p.displayStock }];
+      return [
+        ...prev,
+        {
+          productId: p.id,
+          name: p.name,
+          price: p.price,
+          basePrice: p.price,
+          quantity: 1,
+          baseStock: p.displayStock,
+          factor: 1,
+          baseUnitLabel: p.unit,
+          availableUnits: p.units,
+        },
+      ];
     });
     setQuery("");
+  }
+
+  // Switching a cart line between the base unit and one of the product's
+  // packaging units (box/pack/strip) — re-derives price and re-clamps the
+  // quantity to what's actually available in that unit.
+  function changeLineUnit(index: number, unitName: string) {
+    setCart((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l;
+        if (!unitName) {
+          const max = l.baseStock;
+          return { ...l, unitName: undefined, factor: 1, price: l.basePrice, quantity: Math.min(l.quantity, max) || 1 };
+        }
+        const pu = l.availableUnits.find((u) => u.name === unitName);
+        if (!pu) return l;
+        const max = Math.max(1, Math.floor(l.baseStock / pu.factor));
+        return { ...l, unitName: pu.name, factor: pu.factor, price: pu.price, quantity: Math.min(l.quantity, max) || 1 };
+      })
+    );
   }
 
   // A hardware barcode scanner behaves like a keyboard: it types the code
@@ -163,26 +219,38 @@ export default function PosPage() {
     }
   }
 
-  function updateQty(productId: string, quantity: number) {
-    setCart((prev) =>
-      prev.map((l) => (l.productId === productId ? { ...l, quantity: Math.max(1, quantity) } : l))
-    );
+  function updateQty(index: number, quantity: number) {
+    setCart((prev) => prev.map((l, i) => (i === index ? { ...l, quantity: Math.max(1, quantity) } : l)));
   }
 
-  function removeLine(productId: string) {
-    setCart((prev) => prev.filter((l) => l.productId !== productId));
+  function removeLine(index: number) {
+    setCart((prev) => prev.filter((_, i) => i !== index));
   }
 
   const total = cart.reduce((s, l) => s + l.price * l.quantity, 0);
 
+  const needsAccount = paymentMethod === "BANK_TRANSFER" && !financeAccountId;
+  const needsCreditor = paymentMethod === "CREDIT" && !creditorName.trim();
+  const bankAccounts = accounts.filter((a) => a.type === "BANK");
+
   async function checkout() {
+    if (needsAccount) {
+      setError("Select which bank the transfer went to");
+      return;
+    }
+    if (needsCreditor) {
+      setError("A buyer name is required for credit sales");
+      return;
+    }
     setSubmitting(true);
     setError("");
     setQueuedNote("");
     const payload = {
-      items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+      items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, unitName: l.unitName })),
       paymentMethod,
       cashierName: cashierName || undefined,
+      creditorName: paymentMethod === "CREDIT" ? creditorName.trim() : undefined,
+      financeAccountId: paymentMethod === "BANK_TRANSFER" ? financeAccountId : undefined,
     };
 
     try {
@@ -200,6 +268,8 @@ export default function PosPage() {
       const data = await res.json();
       setReceipt(data);
       setCart([]);
+      setCreditorName("");
+      setFinanceAccountId("");
       loadProducts();
     } catch {
       // fetch itself threw — no connection, not a server rejection. Queue it
@@ -295,6 +365,7 @@ export default function PosPage() {
               <thead>
                 <tr>
                   <th>Item</th>
+                  <th>Unit</th>
                   <th>Qty</th>
                   <th>Price</th>
                   <th>Subtotal</th>
@@ -302,25 +373,44 @@ export default function PosPage() {
                 </tr>
               </thead>
               <tbody>
-                {cart.map((l) => (
-                  <tr key={l.productId}>
-                    <td>{l.name}</td>
-                    <td>
-                      <QtyStepper
-                        value={l.quantity}
-                        max={l.stock}
-                        onChange={(qty) => updateQty(l.productId, qty)}
-                      />
-                    </td>
-                    <td>${l.price.toFixed(2)}</td>
-                    <td>${(l.price * l.quantity).toFixed(2)}</td>
-                    <td>
-                      <button className="text-sm text-red-600" onClick={() => removeLine(l.productId)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {cart.map((l, i) => {
+                  const max = l.unitName
+                    ? Math.max(1, Math.floor(l.baseStock / l.factor))
+                    : l.baseStock;
+                  return (
+                    <tr key={`${l.productId}-${l.unitName ?? "base"}-${i}`}>
+                      <td>{l.name}</td>
+                      <td>
+                        {l.availableUnits.length > 0 ? (
+                          <select
+                            className="input py-1"
+                            value={l.unitName ?? ""}
+                            onChange={(e) => changeLineUnit(i, e.target.value)}
+                          >
+                            <option value="">{l.baseUnitLabel}</option>
+                            {l.availableUnits.map((u) => (
+                              <option key={u.id} value={u.name}>
+                                {u.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-slate-500">{l.baseUnitLabel}</span>
+                        )}
+                      </td>
+                      <td>
+                        <QtyStepper value={l.quantity} max={max} onChange={(qty) => updateQty(i, qty)} />
+                      </td>
+                      <td>${l.price.toFixed(2)}</td>
+                      <td>${(l.price * l.quantity).toFixed(2)}</td>
+                      <td>
+                        <button className="text-sm text-red-600" onClick={() => removeLine(i)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -336,15 +426,40 @@ export default function PosPage() {
             <option value="CASH">Cash</option>
             <option value="CARD">Card</option>
             <option value="INSURANCE">Insurance</option>
+            <option value="BANK_TRANSFER">Bank Transfer</option>
+            <option value="TELEBIRR">Telebirr</option>
+            <option value="CREDIT">Credit (pay later)</option>
             <option value="OTHER">Other</option>
           </select>
+          {paymentMethod === "BANK_TRANSFER" && (
+            <select className="input" value={financeAccountId} onChange={(e) => setFinanceAccountId(e.target.value)}>
+              <option value="">Which bank?</option>
+              {bankAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {paymentMethod === "CREDIT" && (
+            <input
+              className="input"
+              placeholder="Buyer's name (required for credit)"
+              value={creditorName}
+              onChange={(e) => setCreditorName(e.target.value)}
+            />
+          )}
           <input
             className="input"
             placeholder="Cashier name (optional)"
             value={cashierName}
             onChange={(e) => setCashierName(e.target.value)}
           />
-          <button className="btn w-full" disabled={cart.length === 0 || submitting} onClick={checkout}>
+          <button
+            className="btn w-full"
+            disabled={cart.length === 0 || submitting || needsAccount || needsCreditor}
+            onClick={checkout}
+          >
             {submitting ? "Processing…" : "Complete Sale"}
           </button>
           {error && <p className="text-sm text-red-600">{error}</p>}

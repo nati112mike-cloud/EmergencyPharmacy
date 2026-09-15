@@ -16,6 +16,8 @@ type Batch = {
 
 type Category = { id: string; name: string };
 
+type ProductUnit = { id: string; name: string; factor: number; price: number };
+
 type Product = {
   id: string;
   sku: string;
@@ -34,6 +36,7 @@ type Product = {
   unitsSold30d: number;
   stockValue: number;
   batches: Batch[];
+  units: ProductUnit[];
 };
 
 type SortKey =
@@ -122,7 +125,9 @@ function InventoryContent() {
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [batchFormFor, setBatchFormFor] = useState<string | null>(null);
+  const [unitsFormFor, setUnitsFormFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
@@ -285,6 +290,9 @@ function InventoryContent() {
           <button className="btn-secondary" onClick={() => setShowImport(true)}>
             Import from Excel
           </button>
+          <button className="btn-secondary" onClick={() => setShowManage(true)}>
+            Categories &amp; Units
+          </button>
           <button className="btn" onClick={() => setShowAddProduct(true)}>
             + Add Product
           </button>
@@ -430,6 +438,12 @@ function InventoryContent() {
                           >
                             Receive stock
                           </button>
+                          <button
+                            className="btn-row"
+                            onClick={() => setUnitsFormFor(unitsFormFor === p.id ? null : p.id)}
+                          >
+                            {unitsFormFor === p.id ? "Hide" : "Units"}
+                          </button>
                           <button className="btn-row" onClick={() => setHistoryProduct(p)}>
                             History
                           </button>
@@ -532,6 +546,13 @@ function InventoryContent() {
                         </td>
                       </tr>
                     )}
+                    {unitsFormFor === p.id && (
+                      <tr>
+                        <td colSpan={11} className="bg-slate-50">
+                          <UnitsPanel product={p} onChanged={load} />
+                        </td>
+                      </tr>
+                    )}
                   </Fragment>
                 );
               })}
@@ -580,6 +601,15 @@ function InventoryContent() {
         <ImportModal
           onClose={() => setShowImport(false)}
           onImported={() => load()}
+        />
+      )}
+
+      {showManage && (
+        <ManageTaxonomyModal
+          categories={categories}
+          unitsInUse={unitsInUse}
+          onClose={() => setShowManage(false)}
+          onChanged={load}
         />
       )}
     </div>
@@ -651,6 +681,206 @@ function TransferControl({
   );
 }
 
+/**
+ * Packaging levels for a product (e.g. a "box" of 20, a "strip" of 10) — see
+ * ProductUnit in the schema. The product's own unit/price fields stay the
+ * base level; these are additional levels stock can be received/sold in.
+ */
+function UnitsPanel({ product, onChanged }: { product: Product; onChanged: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [factor, setFactor] = useState("");
+  const [price, setPrice] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editFactor, setEditFactor] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+
+  async function addUnit() {
+    setSubmitting(true);
+    setError("");
+    const res = await fetch(`/api/products/${product.id}/units`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, factor, price }),
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to add unit");
+      return;
+    }
+    setName("");
+    setFactor("");
+    setPrice("");
+    setAdding(false);
+    onChanged();
+  }
+
+  function startEdit(u: ProductUnit) {
+    setEditingId(u.id);
+    setEditFactor(String(u.factor));
+    setEditPrice(String(u.price));
+  }
+
+  async function saveEdit(unitId: string) {
+    setSubmitting(true);
+    setError("");
+    const res = await fetch(`/api/products/${product.id}/units/${unitId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ factor: editFactor, price: editPrice }),
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to update unit");
+      return;
+    }
+    setEditingId(null);
+    onChanged();
+  }
+
+  async function removeUnit(unitId: string) {
+    if (!confirm("Remove this packaging unit?")) return;
+    const res = await fetch(`/api/products/${product.id}/units/${unitId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Failed to remove unit");
+      return;
+    }
+    onChanged();
+  }
+
+  return (
+    <div className="p-3">
+      <p className="mb-2 text-sm text-slate-500">
+        Packaging levels for {product.name} — e.g. a &quot;box&quot; of 20 {product.unit}s. The base
+        unit ({product.unit}, ${product.price.toFixed(2)}) is always sellable too.
+      </p>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs uppercase text-slate-500">
+            <th className="py-1 text-left">Name</th>
+            <th className="py-1 text-left">Contains</th>
+            <th className="py-1 text-left">Price</th>
+            <th className="py-1 text-left"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {product.units.map((u) => (
+            <tr key={u.id}>
+              <td className="py-1">{u.name}</td>
+              <td className="py-1">
+                {editingId === u.id ? (
+                  <input
+                    className="input w-20 py-1"
+                    type="number"
+                    min={2}
+                    value={editFactor}
+                    onChange={(e) => setEditFactor(e.target.value)}
+                  />
+                ) : (
+                  `${u.factor} ${product.unit}(s)`
+                )}
+              </td>
+              <td className="py-1">
+                {editingId === u.id ? (
+                  <input
+                    className="input w-24 py-1"
+                    type="number"
+                    step="0.01"
+                    value={editPrice}
+                    onChange={(e) => setEditPrice(e.target.value)}
+                  />
+                ) : (
+                  `$${u.price.toFixed(2)}`
+                )}
+              </td>
+              <td className="py-1 text-right">
+                {editingId === u.id ? (
+                  <span className="inline-flex gap-2">
+                    <button
+                      className="text-sm font-medium text-brand-600"
+                      disabled={submitting}
+                      onClick={() => saveEdit(u.id)}
+                    >
+                      Save
+                    </button>
+                    <button className="text-sm text-slate-400" onClick={() => setEditingId(null)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <span className="inline-flex gap-2">
+                    <button className="text-sm font-medium text-brand-600" onClick={() => startEdit(u)}>
+                      Edit
+                    </button>
+                    <button className="text-sm text-red-600" onClick={() => removeUnit(u.id)}>
+                      Remove
+                    </button>
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+          {product.units.length === 0 && !adding && (
+            <tr>
+              <td colSpan={4} className="py-2 text-slate-400">
+                No packaging units defined — only sold/received as loose {product.unit}s.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {adding ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            className="input w-32"
+            placeholder="e.g. box"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+          <input
+            className="input w-32"
+            type="number"
+            min={2}
+            placeholder={`${product.unit}s inside`}
+            value={factor}
+            onChange={(e) => setFactor(e.target.value)}
+          />
+          <input
+            className="input w-28"
+            type="number"
+            step="0.01"
+            placeholder="Sell price"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
+          <button
+            className="btn"
+            disabled={submitting || !name || !factor || !price}
+            onClick={addUnit}
+          >
+            Save
+          </button>
+          <button className="btn-secondary" onClick={() => setAdding(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button className="mt-3 text-sm font-medium text-brand-600" onClick={() => setAdding(true)}>
+          + Add packaging unit
+        </button>
+      )}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 const NEW_BATCH = "__new__";
 
 function ReceiveStockForm({
@@ -666,13 +896,19 @@ function ReceiveStockForm({
 }) {
   const [batchChoice, setBatchChoice] = useState(NEW_BATCH);
   const [batchNumber, setBatchNumber] = useState("");
+  const [unitName, setUnitName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [costPrice, setCostPrice] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [location, setLocation] = useState("STORE");
+  const [reprice, setReprice] = useState(false);
+  const [newPrice, setNewPrice] = useState(String(product.price));
+  const [newUnitPrice, setNewUnitPrice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const selectedUnit = product.units.find((u) => u.name === unitName);
 
   const knownBatches = Array.from(new Map(product.batches.map((b) => [b.batchNumber, b])).values());
 
@@ -698,11 +934,15 @@ function ReceiveStockForm({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         batchNumber,
+        unitName: unitName || undefined,
         quantity,
         costPrice,
         expiryDate,
         supplierId: supplierId || undefined,
         location,
+        newPrice: reprice ? newPrice : undefined,
+        newUnitPrices:
+          reprice && selectedUnit && newUnitPrice ? [{ name: selectedUnit.name, price: newUnitPrice }] : undefined,
       }),
     });
     setSubmitting(false);
@@ -715,6 +955,8 @@ function ReceiveStockForm({
   }
 
   const canSubmit = !!(batchNumber && quantity && costPrice && expiryDate);
+  const costLabel = selectedUnit ? `Cost per ${selectedUnit.name}` : "Unit cost";
+  const qtyLabel = selectedUnit ? `Qty (${selectedUnit.name}s)` : "Quantity";
 
   return (
     <form
@@ -744,8 +986,26 @@ function ReceiveStockForm({
         value={batchNumber}
         onChange={(e) => setBatchNumber(e.target.value)}
       />
-      <input className="input" type="number" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} autoFocus />
-      <input className="input" type="number" step="0.01" placeholder="Unit cost" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} />
+      {product.units.length > 0 && (
+        <select
+          className="input"
+          value={unitName}
+          onChange={(e) => {
+            setUnitName(e.target.value);
+            const u = product.units.find((x) => x.name === e.target.value);
+            setNewUnitPrice(u ? String(u.price) : "");
+          }}
+        >
+          <option value="">Received as: {product.unit}(s)</option>
+          {product.units.map((u) => (
+            <option key={u.id} value={u.name}>
+              Received as: {u.name} (×{u.factor})
+            </option>
+          ))}
+        </select>
+      )}
+      <input className="input" type="number" placeholder={qtyLabel} value={quantity} onChange={(e) => setQuantity(e.target.value)} autoFocus />
+      <input className="input" type="number" step="0.01" placeholder={costLabel} value={costPrice} onChange={(e) => setCostPrice(e.target.value)} />
       <input className="input" type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
       <select className="input" title="Store: back room, not sellable. Display: on the shelf, sellable at POS." value={location} onChange={(e) => setLocation(e.target.value)}>
         <option value="STORE">Store (back stock)</option>
@@ -759,6 +1019,32 @@ function ReceiveStockForm({
           </option>
         ))}
       </select>
+      <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 md:col-span-7">
+        <input type="checkbox" checked={reprice} onChange={(e) => setReprice(e.target.checked)} />
+        New stock is arriving at a different cost — update the selling price too
+      </label>
+      {reprice && (
+        <>
+          <input
+            className="input"
+            type="number"
+            step="0.01"
+            placeholder={`New price per ${product.unit}`}
+            value={newPrice}
+            onChange={(e) => setNewPrice(e.target.value)}
+          />
+          {selectedUnit && (
+            <input
+              className="input"
+              type="number"
+              step="0.01"
+              placeholder={`New price per ${selectedUnit.name}`}
+              value={newUnitPrice}
+              onChange={(e) => setNewUnitPrice(e.target.value)}
+            />
+          )}
+        </>
+      )}
       <div className="col-span-2 flex gap-2 md:col-span-7">
         <button type="submit" className="btn" disabled={submitting || !canSubmit}>
           Save Batch
@@ -1018,6 +1304,139 @@ function HistoryModal({ product, onClose }: { product: Product; onClose: () => v
           </button>
         </div>
     </ModalBackdrop>
+  );
+}
+
+function ManageTaxonomyModal({
+  categories,
+  unitsInUse,
+  onClose,
+  onChanged,
+}: {
+  categories: Category[];
+  unitsInUse: string[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  return (
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-lg" className="max-h-[85vh] overflow-y-auto">
+      <h2 className="mb-4 text-lg font-semibold">Categories &amp; Units</h2>
+
+      <h3 className="mb-2 text-sm font-semibold text-slate-700">Categories</h3>
+      <ul className="mb-5 space-y-1">
+        {categories.map((c) => (
+          <RenameRow
+            key={c.id}
+            value={c.name}
+            onRename={async (name) => {
+              const res = await fetch(`/api/categories/${c.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name }),
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error ?? "Failed to rename category");
+              }
+              onChanged();
+            }}
+          />
+        ))}
+        {categories.length === 0 && <li className="text-sm text-slate-400">No categories yet.</li>}
+      </ul>
+
+      <h3 className="mb-2 text-sm font-semibold text-slate-700">Units</h3>
+      <p className="mb-2 text-xs text-slate-500">
+        Renames the base unit label (e.g. fixing &quot;Strip&quot; vs &quot;strip&quot;) across every product that uses it.
+      </p>
+      <ul className="space-y-1">
+        {unitsInUse.map((u) => (
+          <RenameRow
+            key={u}
+            value={u}
+            onRename={async (name) => {
+              const res = await fetch(`/api/units/rename`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ oldName: u, newName: name }),
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error ?? "Failed to rename unit");
+              }
+              onChanged();
+            }}
+          />
+        ))}
+        {unitsInUse.length === 0 && <li className="text-sm text-slate-400">No units in use yet.</li>}
+      </ul>
+
+      <div className="mt-5 flex justify-end">
+        <button className="btn-secondary" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+function RenameRow({ value, onRename }: { value: string; onRename: (name: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    if (!text.trim() || text.trim() === value) {
+      setEditing(false);
+      setText(value);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onRename(text.trim());
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to rename");
+    }
+    setSaving(false);
+  }
+
+  if (!editing) {
+    return (
+      <li className="flex items-center justify-between rounded-lg px-2 py-1 hover:bg-slate-50">
+        <span className="text-sm">{value}</span>
+        <button className="text-sm font-medium text-brand-600" onClick={() => setEditing(true)}>
+          Rename
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center gap-2 px-2 py-1">
+      <input
+        className="input flex-1 py-1"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+        autoFocus
+      />
+      <button className="text-sm font-medium text-brand-600" disabled={saving} onClick={save}>
+        Save
+      </button>
+      <button
+        className="text-sm text-slate-400"
+        onClick={() => {
+          setEditing(false);
+          setText(value);
+        }}
+      >
+        ✕
+      </button>
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </li>
   );
 }
 

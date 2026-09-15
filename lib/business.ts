@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { postSaleTransaction } from "@/lib/finance";
 import { PaymentMethod, BatchLocation, StockMovementType } from "@/lib/types";
 
 /** A batch is flagged "expiring soon" inside this many days. */
@@ -231,7 +232,12 @@ export async function writeOffBatch(batchId: string, performedBy?: string) {
   });
 }
 
-export type CartLine = { productId: string; quantity: number };
+export type CartLine = {
+  productId: string;
+  quantity: number; // in the chosen unit (unitName), or base units if unitName is omitted
+  unitName?: string; // e.g. "box" — one of the product's ProductUnit rows; omit for the base unit
+  batchId?: string; // sell from this exact batch (required for non-base units — see below)
+};
 
 export type CheckoutResult = {
   saleId: string;
@@ -239,19 +245,31 @@ export type CheckoutResult = {
 };
 
 /**
- * Records a sale and decrements stock using FEFO (first-expiry-first-out):
- * each line is fulfilled from the soonest-to-expire non-expired DISPLAY batches
- * first, which is what keeps a pharmacy from selling fresh stock while older
- * stock rots. Only DISPLAY stock is sellable — STORE (back) stock must be
- * transferred to the shelf first via transferStock().
+ * Records a sale and decrements stock. Plain base-unit lines (no unitName)
+ * behave exactly as before: FEFO (first-expiry-first-out) across all
+ * non-expired DISPLAY batches, splitting across batches if one lot doesn't
+ * cover the full quantity. Selling by a packaging unit (box/pack/strip) or
+ * an explicitly chosen batch is different on purpose: it must be fulfilled
+ * from a *single* batch — a "box" can't be half from one lot and half from
+ * another — so either supply batchId yourself or let the soonest-expiring
+ * batch with enough stock be picked automatically; if none has enough,
+ * checkout fails rather than silently splitting a packaged unit across lots.
  */
 export async function checkout(
   lines: CartLine[],
-  opts: { paymentMethod?: PaymentMethod; cashierName?: string } = {}
+  opts: {
+    paymentMethod?: PaymentMethod;
+    cashierName?: string;
+    creditorName?: string;
+    financeAccountId?: string;
+  } = {}
 ): Promise<CheckoutResult> {
   if (lines.length === 0) throw new Error("Cart is empty");
+  if (opts.paymentMethod === "CREDIT" && !opts.creditorName?.trim()) {
+    throw new Error("A buyer name is required for credit sales");
+  }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     let totalAmount = 0;
     const saleItemsData: {
       productId: string;
@@ -259,44 +277,96 @@ export async function checkout(
       quantity: number;
       unitPrice: number;
       unitCost: number;
+      soldUnitLabel: string | null;
+      soldUnitQty: number | null;
     }[] = [];
-    const movements: {
-      productId: string;
-      batchId: string;
-      quantity: number;
-    }[] = [];
+    const movements: { productId: string; batchId: string; quantity: number }[] = [];
 
     for (const line of lines) {
       if (line.quantity <= 0) continue;
-      const product = await tx.product.findUnique({ where: { id: line.productId } });
+      const product = await tx.product.findUnique({
+        where: { id: line.productId },
+        include: { units: true },
+      });
       if (!product) throw new Error(`Product ${line.productId} not found`);
 
+      let factor = 1;
+      let baseUnitPrice = product.price;
+      let soldUnitLabel: string | null = null;
+      let soldUnitQty: number | null = null;
+
+      if (line.unitName) {
+        const pu = product.units.find((u) => u.name === line.unitName);
+        if (!pu) throw new Error(`"${line.unitName}" isn't a defined unit for ${product.name}`);
+        factor = pu.factor;
+        baseUnitPrice = pu.price / factor;
+        soldUnitLabel = pu.name;
+        soldUnitQty = line.quantity;
+      }
+      const baseQty = line.quantity * factor;
+
+      if (line.batchId || factor > 1) {
+        // Single-batch path: an explicit batch, or any non-base unit.
+        const batch = line.batchId
+          ? await tx.batch.findUnique({ where: { id: line.batchId } })
+          : (
+              await tx.batch.findMany({
+                where: { productId: line.productId, quantity: { gte: baseQty }, location: "DISPLAY" },
+                orderBy: { expiryDate: "asc" },
+              })
+            ).find((b) => !isExpired(b.expiryDate));
+
+        if (!batch || batch.productId !== line.productId) {
+          throw new Error(`Batch not found for ${product.name}`);
+        }
+        if (batch.location !== "DISPLAY" || isExpired(batch.expiryDate) || batch.quantity < baseQty) {
+          const unitDesc = soldUnitLabel ? `${line.quantity} ${soldUnitLabel}(s)` : `${baseQty} unit(s)`;
+          throw new Error(
+            `Insufficient display stock in a single batch for ${product.name} (${unitDesc})` +
+              (soldUnitLabel ? " — try selling as loose base units instead, or transfer more stock first" : "")
+          );
+        }
+
+        await tx.batch.update({ where: { id: batch.id }, data: { quantity: { decrement: baseQty } } });
+        saleItemsData.push({
+          productId: product.id,
+          batchId: batch.id,
+          quantity: baseQty,
+          unitPrice: baseUnitPrice,
+          unitCost: batch.costPrice,
+          soldUnitLabel,
+          soldUnitQty,
+        });
+        movements.push({ productId: product.id, batchId: batch.id, quantity: -baseQty });
+        totalAmount += baseQty * baseUnitPrice;
+        continue;
+      }
+
+      // Base-unit path: FEFO across batches, splitting if needed (original behavior).
       const batches = await tx.batch.findMany({
         where: { productId: line.productId, quantity: { gt: 0 }, location: "DISPLAY" },
         orderBy: { expiryDate: "asc" },
       });
       const available = batches.filter((b) => !isExpired(b.expiryDate));
 
-      let remaining = line.quantity;
+      let remaining = baseQty;
       for (const batch of available) {
         if (remaining <= 0) break;
         const take = Math.min(batch.quantity, remaining);
         if (take <= 0) continue;
 
-        await tx.batch.update({
-          where: { id: batch.id },
-          data: { quantity: { decrement: take } },
-        });
-
+        await tx.batch.update({ where: { id: batch.id }, data: { quantity: { decrement: take } } });
         saleItemsData.push({
           productId: product.id,
           batchId: batch.id,
           quantity: take,
-          unitPrice: product.price,
+          unitPrice: baseUnitPrice,
           unitCost: batch.costPrice,
+          soldUnitLabel: null,
+          soldUnitQty: null,
         });
         movements.push({ productId: product.id, batchId: batch.id, quantity: -take });
-        totalAmount += take * product.price;
+        totalAmount += take * baseUnitPrice;
         remaining -= take;
       }
 
@@ -312,11 +382,15 @@ export async function checkout(
       }
     }
 
+    const isCredit = opts.paymentMethod === "CREDIT";
     const sale = await tx.sale.create({
       data: {
         totalAmount,
         paymentMethod: opts.paymentMethod ?? "CASH",
         cashierName: opts.cashierName,
+        financeAccountId: opts.financeAccountId,
+        creditorName: isCredit ? opts.creditorName : undefined,
+        creditPaymentStatus: isCredit ? "UNPAID" : undefined,
         items: { create: saleItemsData },
       },
     });
@@ -336,6 +410,15 @@ export async function checkout(
 
     return { saleId: sale.id, totalAmount };
   });
+
+  // Money that landed directly in a bank/Telebirr account is posted to the
+  // ledger outside the sale transaction (it's a separate concern — if this
+  // fails, the sale itself has still correctly happened and shouldn't roll back).
+  if (opts.financeAccountId && (opts.paymentMethod === "BANK_TRANSFER" || opts.paymentMethod === "TELEBIRR")) {
+    await postSaleTransaction(result.saleId, opts.financeAccountId, result.totalAmount, opts.cashierName);
+  }
+
+  return result;
 }
 
 export type ReturnResult = {
