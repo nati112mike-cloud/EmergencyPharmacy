@@ -129,6 +129,8 @@ function InventoryContent() {
   const [unitFilter, setUnitFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,6 +222,50 @@ function InventoryContent() {
     load();
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) =>
+      prev.size === sorted.length ? new Set() : new Set(sorted.map((p) => p.id))
+    );
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected product(s)? This can't be undone.`)) return;
+
+    setBulkDeleting(true);
+    let deleted = 0;
+    const failures: string[] = [];
+    for (const id of ids) {
+      const product = products.find((p) => p.id === id);
+      const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        deleted++;
+      } else {
+        const data = await res.json().catch(() => ({}));
+        failures.push(`${product?.name ?? id}: ${data.error ?? "failed"}`);
+      }
+    }
+    setBulkDeleting(false);
+    setSelectedIds(new Set());
+    load();
+
+    if (failures.length > 0) {
+      alert(
+        `Deleted ${deleted} of ${ids.length}. Skipped:\n${failures.join("\n")}`
+      );
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -228,6 +274,11 @@ function InventoryContent() {
           <p className="text-slate-500">Store vs. display stock, expiry tracking, and reorder points.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {selectedIds.size > 0 && (
+            <button className="btn-row-danger px-3 py-2 text-sm" disabled={bulkDeleting} onClick={bulkDelete}>
+              {bulkDeleting ? "Deleting…" : `Delete Selected (${selectedIds.size})`}
+            </button>
+          )}
           <a href="/api/inventory/export" className="btn-secondary">
             Export to Excel
           </a>
@@ -298,6 +349,14 @@ function InventoryContent() {
           <table className="data-table w-full">
             <thead>
               <tr>
+                <th className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={sorted.length > 0 && selectedIds.size === sorted.length}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all"
+                  />
+                </th>
                 <th>SKU</th>
                 <th>Name</th>
                 <th>Category</th>
@@ -319,6 +378,14 @@ function InventoryContent() {
                 return (
                   <Fragment key={p.id}>
                     <tr>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelected(p.id)}
+                          aria-label={`Select ${p.name}`}
+                        />
+                      </td>
                       <td className="font-mono text-xs">{p.sku}</td>
                       <td className="font-medium">{p.name}</td>
                       <td>{p.category?.name ?? <span className="text-slate-400">Uncategorized</span>}</td>
@@ -377,7 +444,7 @@ function InventoryContent() {
                     </tr>
                     {expandedId === p.id && (
                       <tr>
-                        <td colSpan={10} className="bg-slate-50">
+                        <td colSpan={11} className="bg-slate-50">
                           <div className="p-3">
                             <table className="w-full text-sm">
                               <thead>
@@ -452,7 +519,7 @@ function InventoryContent() {
                     )}
                     {batchFormFor === p.id && (
                       <tr>
-                        <td colSpan={10} className="bg-slate-50">
+                        <td colSpan={11} className="bg-slate-50">
                           <ReceiveStockForm
                             product={p}
                             suppliers={suppliers}
@@ -470,7 +537,7 @@ function InventoryContent() {
               })}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="py-6 text-center text-slate-400">
+                  <td colSpan={11} className="py-6 text-center text-slate-400">
                     No products found.
                   </td>
                 </tr>

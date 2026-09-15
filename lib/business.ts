@@ -137,6 +137,68 @@ export async function getExpiringBatches(): Promise<ExpiringBatch[]> {
     });
 }
 
+export type InventoryValueByCategory = {
+  categoryId: string | null;
+  categoryName: string;
+  costValue: number;
+  retailValue: number;
+  unitCount: number;
+};
+
+export type InventoryValue = {
+  totalCostValue: number;
+  totalRetailValue: number;
+  byCategory: InventoryValueByCategory[];
+};
+
+/**
+ * A snapshot (as of right now, not scoped to any day) of what the current
+ * stock is worth — at cost (what was paid for it, i.e. money tied up in
+ * inventory) and at retail (what it would bring in if all sold), broken
+ * down by category. Only counts non-expired batches with quantity left.
+ */
+export async function getInventoryValue(): Promise<InventoryValue> {
+  const batches = await prisma.batch.findMany({
+    where: { quantity: { gt: 0 } },
+    include: { product: { include: { category: true } } },
+  });
+
+  const live = batches.filter((b) => !isExpired(b.expiryDate));
+
+  const byCategory = new Map<string, InventoryValueByCategory>();
+  let totalCostValue = 0;
+  let totalRetailValue = 0;
+
+  for (const b of live) {
+    const categoryId = b.product.categoryId;
+    const categoryName = b.product.category?.name ?? "Uncategorized";
+    const key = categoryId ?? "__uncategorized__";
+    const cost = b.costPrice * b.quantity;
+    const retail = b.product.price * b.quantity;
+
+    const entry = byCategory.get(key) ?? {
+      categoryId,
+      categoryName,
+      costValue: 0,
+      retailValue: 0,
+      unitCount: 0,
+    };
+    entry.costValue += cost;
+    entry.retailValue += retail;
+    entry.unitCount += b.quantity;
+    byCategory.set(key, entry);
+
+    totalCostValue += cost;
+    totalRetailValue += retail;
+  }
+
+  return {
+    totalCostValue,
+    totalRetailValue,
+    byCategory: Array.from(byCategory.values()).sort((a, b) => b.costValue - a.costValue),
+  };
+}
+
 /**
  * Zeroes out an expired batch and logs a WRITE_OFF_EXPIRED movement — the
  * stock is gone (spoiled/destroyed), not sellable, so this doesn't move

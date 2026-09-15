@@ -40,6 +40,18 @@ type DailyReport = {
   }[];
 };
 
+type InventoryValue = {
+  totalCostValue: number;
+  totalRetailValue: number;
+  byCategory: {
+    categoryId: string | null;
+    categoryName: string;
+    costValue: number;
+    retailValue: number;
+    unitCount: number;
+  }[];
+};
+
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
@@ -61,6 +73,7 @@ function ReportsContent() {
   const [report, setReport] = useState<DailyReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [refundSaleId, setRefundSaleId] = useState<string | null>(null);
+  const [inventoryValue, setInventoryValue] = useState<InventoryValue | null>(null);
 
   async function generate(d: string) {
     setLoading(true);
@@ -72,6 +85,9 @@ function ReportsContent() {
 
   useEffect(() => {
     generate(date);
+    fetch("/api/reports/inventory-value")
+      .then((r) => r.json())
+      .then(setInventoryValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -111,6 +127,38 @@ function ReportsContent() {
         <button className="btn-secondary" onClick={() => shiftDay(1)}>
           Next Day →
         </button>
+      </div>
+
+      <div className="card">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-semibold text-slate-900">Inventory Value</h2>
+            <p className="text-sm text-slate-500">
+              What's currently in stock is worth — right now, not scoped to the day above.
+            </p>
+          </div>
+          <a href="/api/reports/inventory-value/export" className="btn-secondary">
+            Export to Excel
+          </a>
+        </div>
+        {!inventoryValue ? (
+          <p className="mt-3 text-sm text-slate-500">Loading…</p>
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-sm text-slate-500">Total (at cost)</p>
+              <p className="mt-1 text-xl font-bold">{money(inventoryValue.totalCostValue)}</p>
+              <p className="text-xs text-slate-400">Retail: {money(inventoryValue.totalRetailValue)}</p>
+            </div>
+            {inventoryValue.byCategory.map((c) => (
+              <div key={c.categoryId ?? "uncategorized"} className="rounded-lg bg-slate-50 p-3">
+                <p className="text-sm text-slate-500">{c.categoryName}</p>
+                <p className="mt-1 text-xl font-bold">{money(c.costValue)}</p>
+                <p className="text-xs text-slate-400">{c.unitCount} units</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {loading || !report ? (
