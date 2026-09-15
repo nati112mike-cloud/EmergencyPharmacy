@@ -43,6 +43,18 @@ body {
   @apply inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50;
 }
 
+/* Compact boxed action buttons for table rows (Batches, Receive Stock,
+   History, Edit, Delete) — same boxed language as .btn/.btn-secondary but
+   smaller, so a row of several actions doesn't look like a wall of text
+   links and each action reads as its own clickable button. */
+.btn-row {
+  @apply inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50;
+}
+
+.btn-row-danger {
+  @apply inline-flex items-center justify-center rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50;
+}
+
 .input {
   @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500;
 }

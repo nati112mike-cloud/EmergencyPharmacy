@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ModalBackdrop from "@/components/ModalBackdrop";
 
 type Product = {
   id: string;
@@ -495,9 +496,8 @@ function CameraScanModal({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-4 shadow-lg">
-        <h2 className="mb-2 text-lg font-semibold">Scan a barcode</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-sm" zIndex="z-20">
+      <h2 className="mb-2 text-lg font-semibold">Scan a barcode</h2>
         {error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : (
@@ -512,7 +512,6 @@ function CameraScanModal({
             Cancel
           </button>
         </div>
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }

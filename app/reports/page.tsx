@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import RequireAdmin from "@/components/RequireAdmin";
+import ModalBackdrop from "@/components/ModalBackdrop";
 
 type DailyReport = {
   reportDate: string;
@@ -339,9 +340,8 @@ function RefundModal({
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Refund a line item</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-md">
+      <h2 className="mb-4 text-lg font-semibold">Refund a line item</h2>
         {!sale ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : (
@@ -399,7 +399,6 @@ function RefundModal({
             {submitting ? "Processing…" : "Process Refund"}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }

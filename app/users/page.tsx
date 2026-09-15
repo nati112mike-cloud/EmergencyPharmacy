@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import PasswordInput from "@/components/PasswordInput";
+import ModalBackdrop from "@/components/ModalBackdrop";
 
 type User = { id: string; username: string; name: string; role: string; createdAt: string };
 
@@ -169,9 +170,8 @@ function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Reset Password — {user.name}</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-sm">
+      <h2 className="mb-4 text-lg font-semibold">Reset Password — {user.name}</h2>
         {success ? (
           <>
             <p className="text-sm text-emerald-700">
@@ -204,8 +204,7 @@ function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void
             </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -235,29 +234,27 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Add User</h2>
-        <div className="space-y-3">
-          <input className="input" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <PasswordInput placeholder="Password (min 6 characters)" value={password} onChange={setPassword} />
-          <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="STAFF">Staff</option>
-            <option value="ADMIN">Admin</option>
-          </select>
-        </div>
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn" disabled={submitting || !username || !name || !password} onClick={submit}>
-            Save User
-          </button>
-        </div>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-md">
+      <h2 className="mb-4 text-lg font-semibold">Add User</h2>
+      <div className="space-y-3">
+        <input className="input" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+        <PasswordInput placeholder="Password (min 6 characters)" value={password} onChange={setPassword} />
+        <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="STAFF">Staff</option>
+          <option value="ADMIN">Admin</option>
+        </select>
       </div>
-    </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="btn-secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn" disabled={submitting || !username || !name || !password} onClick={submit}>
+          Save User
+        </button>
+      </div>
+    </ModalBackdrop>
   );
 }
 

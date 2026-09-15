@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import PasswordInput from "@/components/PasswordInput";
+import ModalBackdrop from "@/components/ModalBackdrop";
 import { APP_VERSION, CHANGELOG } from "@/lib/changelog";
 
 // STAFF only gets POS and Purchase Orders (posting a sale / posting a
@@ -140,30 +141,28 @@ export default function NavBar() {
 
 function WhatsNewModal({ onClose }: { onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4">
-      <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">What&apos;s New</h2>
-        <div className="space-y-4">
-          {CHANGELOG.map((entry) => (
-            <div key={entry.version}>
-              <p className="text-sm font-semibold text-slate-900">
-                v{entry.version} <span className="font-normal text-slate-400">· {entry.date}</span>
-              </p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-600">
-                {entry.notes.map((n, i) => (
-                  <li key={i}>{n}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-        <div className="mt-5 flex justify-end">
-          <button className="btn" onClick={onClose}>
-            Close
-          </button>
-        </div>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-md" className="max-h-[80vh] overflow-y-auto" zIndex="z-30">
+      <h2 className="mb-4 text-lg font-semibold">What&apos;s New</h2>
+      <div className="space-y-4">
+        {CHANGELOG.map((entry) => (
+          <div key={entry.version}>
+            <p className="text-sm font-semibold text-slate-900">
+              v{entry.version} <span className="font-normal text-slate-400">· {entry.date}</span>
+            </p>
+            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-600">
+              {entry.notes.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
-    </div>
+      <div className="mt-5 flex justify-end">
+        <button className="btn" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </ModalBackdrop>
   );
 }
 
@@ -197,9 +196,8 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Change Password</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-sm" zIndex="z-30">
+      <h2 className="mb-4 text-lg font-semibold">Change Password</h2>
         {success ? (
           <>
             <p className="text-sm text-emerald-700">Password changed successfully.</p>
@@ -243,7 +241,6 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
             </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useCurrentUser } from "@/components/RequireAdmin";
+import ModalBackdrop from "@/components/ModalBackdrop";
 
 type Supplier = {
   id: string;
@@ -311,24 +312,22 @@ function AddSupplierModal({ onClose, onCreated }: { onClose: () => void; onCreat
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Add Supplier</h2>
-        <div className="space-y-3">
-          <input className="input" placeholder="Supplier name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="input" placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
-          <input className="input" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <input className="input" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn" disabled={submitting || !name} onClick={submit}>
-            Save Supplier
-          </button>
-        </div>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-md">
+      <h2 className="mb-4 text-lg font-semibold">Add Supplier</h2>
+      <div className="space-y-3">
+        <input className="input" placeholder="Supplier name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+        <input className="input" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <input className="input" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
       </div>
-    </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="btn-secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn" disabled={submitting || !name} onClick={submit}>
+          Save Supplier
+        </button>
+      </div>
+    </ModalBackdrop>
   );
 }

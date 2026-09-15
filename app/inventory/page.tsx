@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState, useCallback } from "react";
 import RequireAdmin from "@/components/RequireAdmin";
+import ModalBackdrop from "@/components/ModalBackdrop";
 import { UNIT_OPTIONS } from "@/lib/types";
 
 type Batch = {
@@ -30,8 +31,33 @@ type Product = {
   stock: number;
   storeStock: number;
   displayStock: number;
+  unitsSold30d: number;
+  stockValue: number;
   batches: Batch[];
 };
+
+type SortKey =
+  | "name"
+  | "expiry_soonest"
+  | "expiry_latest"
+  | "fast_moving"
+  | "slow_moving"
+  | "value_high";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "name", label: "Name (A–Z)" },
+  { value: "expiry_soonest", label: "Expiry: soonest first" },
+  { value: "expiry_latest", label: "Expiry: latest first" },
+  { value: "fast_moving", label: "Fast-moving (best sellers, 30d)" },
+  { value: "slow_moving", label: "Slow-moving (30d)" },
+  { value: "value_high", label: "Stock value: highest first" },
+];
+
+function soonestExpiry(p: Product): number {
+  const live = p.batches.filter((b) => b.quantity > 0);
+  if (live.length === 0) return Infinity;
+  return Math.min(...live.map((b) => new Date(b.expiryDate).getTime()));
+}
 
 type Supplier = { id: string; name: string };
 
@@ -101,6 +127,7 @@ function InventoryContent() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
   const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -136,6 +163,23 @@ function InventoryContent() {
       (locationFilter === "LOW" && p.stock > 0 && p.stock <= p.reorderPoint) ||
       (locationFilter === "OUT" && p.stock <= 0);
     return matchesQuery && matchesCategory && matchesUnit && matchesLocation;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortKey) {
+      case "expiry_soonest":
+        return soonestExpiry(a) - soonestExpiry(b);
+      case "expiry_latest":
+        return soonestExpiry(b) - soonestExpiry(a);
+      case "fast_moving":
+        return b.unitsSold30d - a.unitsSold30d;
+      case "slow_moving":
+        return a.unitsSold30d - b.unitsSold30d;
+      case "value_high":
+        return b.stockValue - a.stockValue;
+      default:
+        return a.name.localeCompare(b.name);
+    }
   });
 
   async function transfer(batchId: string, quantity: number) {
@@ -234,6 +278,17 @@ function InventoryContent() {
             </option>
           ))}
         </select>
+        <select
+          className="input max-w-xs"
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value as SortKey)}
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              Sort: {o.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading ? (
@@ -256,7 +311,7 @@ function InventoryContent() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
+              {sorted.map((p) => {
                 const soonest = [...p.batches]
                   .filter((b) => b.quantity > 0)
                   .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())[0];
@@ -294,34 +349,30 @@ function InventoryContent() {
                           "—"
                         )}
                       </td>
-                      <td className="space-x-2 whitespace-nowrap text-right">
-                        <button
-                          className="text-sm font-medium text-brand-600"
-                          onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                        >
-                          {expandedId === p.id ? "Hide" : "Batches"}
-                        </button>
-                        <button
-                          className="text-sm font-medium text-brand-600"
-                          onClick={() => setBatchFormFor(batchFormFor === p.id ? null : p.id)}
-                        >
-                          Receive stock
-                        </button>
-                        <button
-                          className="text-sm font-medium text-brand-600"
-                          onClick={() => setHistoryProduct(p)}
-                        >
-                          History
-                        </button>
-                        <button
-                          className="text-sm font-medium text-brand-600"
-                          onClick={() => setEditProduct(p)}
-                        >
-                          Edit
-                        </button>
-                        <button className="text-sm text-red-600" onClick={() => deleteProduct(p)}>
-                          Delete
-                        </button>
+                      <td className="whitespace-nowrap text-right">
+                        <div className="inline-flex flex-wrap justify-end gap-1.5">
+                          <button
+                            className="btn-row"
+                            onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                          >
+                            {expandedId === p.id ? "Hide" : "Batches"}
+                          </button>
+                          <button
+                            className="btn-row"
+                            onClick={() => setBatchFormFor(batchFormFor === p.id ? null : p.id)}
+                          >
+                            Receive stock
+                          </button>
+                          <button className="btn-row" onClick={() => setHistoryProduct(p)}>
+                            History
+                          </button>
+                          <button className="btn-row" onClick={() => setEditProduct(p)}>
+                            Edit
+                          </button>
+                          <button className="btn-row-danger" onClick={() => deleteProduct(p)}>
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {expandedId === p.id && (
@@ -417,7 +468,7 @@ function InventoryContent() {
                   </Fragment>
                 );
               })}
-              {filtered.length === 0 && (
+              {sorted.length === 0 && (
                 <tr>
                   <td colSpan={10} className="py-6 text-center text-slate-400">
                     No products found.
@@ -721,9 +772,8 @@ function ProductModal({
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+    <ModalBackdrop onClose={onClose}>
       <form
-        className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg"
         onSubmit={(e) => {
           e.preventDefault();
           if (!submitting && canSubmit) submit();
@@ -810,7 +860,7 @@ function ProductModal({
           </button>
         </div>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -839,9 +889,8 @@ function HistoryModal({ product, onClose }: { product: Product; onClose: () => v
   }, [product.id]);
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-1 text-lg font-semibold">History — {product.name}</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-2xl" className="max-h-[85vh] overflow-y-auto">
+      <h2 className="mb-1 text-lg font-semibold">History — {product.name}</h2>
         <p className="mb-4 text-sm text-slate-500">{product.sku}</p>
 
         <h3 className="mb-2 text-sm font-semibold text-slate-700">Price changes</h3>
@@ -901,8 +950,7 @@ function HistoryModal({ product, onClose }: { product: Product; onClose: () => v
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -952,9 +1000,8 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
   const warningRows = summary?.rows.filter((r) => r.status !== "error" && r.message) ?? [];
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-2 text-lg font-semibold">Import Inventory from Excel</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-2xl" className="max-h-[85vh] overflow-y-auto">
+      <h2 className="mb-2 text-lg font-semibold">Import Inventory from Excel</h2>
         <p className="mb-4 text-sm text-slate-500">
           Upload a spreadsheet with product name, batch number, quantity, expiry date, category,
           and supplier — one row per stock lot. Existing products are matched by SKU (or by name if
@@ -1032,7 +1079,6 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }

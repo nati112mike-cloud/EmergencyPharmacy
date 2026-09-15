@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import RequireAdmin from "@/components/RequireAdmin";
+import ModalBackdrop from "@/components/ModalBackdrop";
 
 type UpcomingPayment = {
   id: string;
@@ -210,9 +211,8 @@ function AddBillModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-md">
       <form
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg"
         onSubmit={(e) => {
           e.preventDefault();
           if (!submitting && title && amount && dueDate) submit();
@@ -254,7 +254,7 @@ function AddBillModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
           </button>
         </div>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -331,9 +331,8 @@ function UploadInvoiceModal({
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-2 text-lg font-semibold">Upload Purchase Invoice</h2>
+    <ModalBackdrop onClose={onClose} maxWidth="max-w-2xl" className="max-h-[85vh] overflow-y-auto">
+      <h2 className="mb-2 text-lg font-semibold">Upload Purchase Invoice</h2>
 
         {step === "upload" && (
           <>
@@ -455,7 +454,6 @@ function UploadInvoiceModal({
             </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalBackdrop>
   );
 }
